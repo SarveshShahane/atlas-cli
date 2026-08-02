@@ -1,0 +1,27 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "atlas-cli"
+version = "0.1.0"
+description = "Atlas: Autonomous Data Science Operating System CLI"
+readme = "readme.md"
+requires-python = ">=3.10"
+dependencies = [
+    "typer>=0.9.0",
+    "rich>=13.0.0",
+    "sqlmodel>=0.0.14",
+    "pydantic>=2.0.0",
+    "litellm>=1.0.0",
+    "pandas>=2.0.0",
+    "polars>=0.20.0",
+    "duckdb>=0.9.0",
+    "numpy>=1.24.0",
+    "scikit-learn>=1.2.0",
+    "jinja2>=3.1.0",
+]
+
+[project.scripts]
+atlas = "atlas_cli.cli.main:app"
+atlas-cli = "atlas_cli.cli.main:app"
