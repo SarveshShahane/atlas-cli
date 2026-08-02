@@ -3,13 +3,11 @@ from typing import Optional
 from rich.panel import Panel
 from atlas_cli.core.logger import console
 
-app = typer.Typer(help="Generate production FastAPI endpoint microservice and Dockerfile scaffold.")
 
-@app.callback(invoke_without_command=True)
 def deploy(
     experiment_id: Optional[str] = typer.Option(None, "--exp-id", "-e", help="Winning Experiment ID to package"),
-    output_dir: str = typer.Option("./deploy", "--out", "-o", help="Target microservice scaffold directory")
-):
+    output_dir: str = typer.Option("./deploy", "--out", "-o", help="Target microservice scaffold directory"),
+) -> None:
     """Package selected model into production FastAPI inference endpoint directory."""
     console.print(Panel(
         f"[bold cyan]Deployment Scaffold Generator (Stub)[/bold cyan]\n"

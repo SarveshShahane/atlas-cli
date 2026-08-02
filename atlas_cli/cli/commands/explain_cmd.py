@@ -3,12 +3,10 @@ from typing import Optional
 from rich.panel import Panel
 from atlas_cli.core.logger import console
 
-app = typer.Typer(help="Generate SHAP feature importance plots and natural-language decision reasoning.")
 
-@app.callback(invoke_without_command=True)
 def explain(
-    experiment_id: Optional[str] = typer.Option(None, "--exp-id", "-e", help="Experiment ID to explain")
-):
+    experiment_id: Optional[str] = typer.Option(None, "--exp-id", "-e", help="Experiment ID to explain"),
+) -> None:
     """Run SHAP analysis and generate feature importance explanations."""
     console.print(Panel(
         f"[bold cyan]Model Explainability Engine (Stub)[/bold cyan]\n"

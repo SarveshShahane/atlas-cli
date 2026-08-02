@@ -3,13 +3,11 @@ from typing import Optional
 from rich.panel import Panel
 from atlas_cli.core.logger import console
 
-app = typer.Typer(help="Generate publication-ready Markdown and HTML executive reports.")
 
-@app.callback(invoke_without_command=True)
 def report(
     run_id: Optional[str] = typer.Option(None, "--run-id", "-r", help="Run ID of the experiment workflow"),
-    output_dir: str = typer.Option("./reports", "--out", "-o", help="Output directory for generated reports")
-):
+    output_dir: str = typer.Option("./reports", "--out", "-o", help="Output directory for generated reports"),
+) -> None:
     """Compile dataset summaries, model metrics, charts, and explanations into REPORT.md / REPORT.html."""
     console.print(Panel(
         f"[bold cyan]Automated Executive Report Generator (Stub)[/bold cyan]\n"

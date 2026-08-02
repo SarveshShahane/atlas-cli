@@ -3,13 +3,11 @@ from typing import Optional
 from rich.panel import Panel
 from atlas_cli.core.logger import console
 
-app = typer.Typer(help="Execute parallel multi-model training and experimentation graph.")
 
-@app.callback(invoke_without_command=True)
 def experiment(
     run_id: Optional[str] = typer.Option(None, "--run-id", "-r", help="Run ID of the execution plan"),
-    parallel: int = typer.Option(4, "--parallel", "-p", help="Number of concurrent process workers")
-):
+    parallel: int = typer.Option(4, "--parallel", "-p", help="Number of concurrent process workers"),
+) -> None:
     """Run parallel candidate experiments for a given run plan."""
     console.print(Panel(
         f"[bold cyan]Parallel Experimentation Engine (Stub)[/bold cyan]\n"
