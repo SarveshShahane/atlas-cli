@@ -41,13 +41,18 @@ class Settings(BaseModel):
 
     @property
     def db_url(self) -> str:
-        """Craft database URL dynamically before DB initiation."""
-        custom_url = os.getenv("DATABASE_URL")
-        if custom_url and custom_url.strip():
-            return custom_url
+        """Craft database URL dynamically before DB initiation.
 
-        if self.db_host and self.db_host.lower() != "sqlite":
-            return f"postgresql://{self.db_user}:{self.db_password}@{self.db_host}:{self.db_port}/{self.db_name}"
+        Priority:
+          1. Explicit DATABASE_URL environment variable (non-empty).
+          2. SQLite fallback (local development default).
+
+        The .env ships DB_HOST=postgres for Docker Compose, but when
+        DATABASE_URL is blank the intent is local SQLite usage.
+        """
+        custom_url = os.getenv("DATABASE_URL", "").strip()
+        if custom_url:
+            return custom_url
 
         return f"sqlite:///{self.db_path}"
 
