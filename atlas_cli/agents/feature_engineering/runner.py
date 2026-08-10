@@ -80,12 +80,9 @@ def process_feature_engineering(
     X_raw = df.drop(columns=[target_col])
 
     if plan.task_type in {"binary_classification", "multiclass_classification"}:
-        if not pd.api.types.is_numeric_dtype(y_raw.dtype):
-            le = LabelEncoder()
-            y = le.fit_transform(y_raw)
-            joblib.dump(le, run_dir / "label_encoder.joblib")
-        else:
-            y = y_raw.values
+        le = LabelEncoder()
+        y = le.fit_transform(y_raw)
+        joblib.dump(le, run_dir / "label_encoder.joblib")
     else:
         y = y_raw.values.astype(np.float64)
 

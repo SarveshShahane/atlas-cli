@@ -139,7 +139,12 @@ def run_experiments(
 
     results: list[ExperimentResult] = []
     effective_workers = min(max_workers, len(worker_args_list))
-    logger.info(f"Launching {len(worker_args_list)} model(s) across {effective_workers} worker(s)...")
+    # Pre-import packages in main thread to prevent thread import lock contention and circular imports
+    for _mod in ("polars", "sklearn", "lightgbm", "xgboost", "catboost", "joblib"):
+        try:
+            __import__(_mod)
+        except ImportError:
+            pass
 
     t0 = time.perf_counter()
     with ThreadPoolExecutor(max_workers=effective_workers) as executor:
@@ -197,6 +202,7 @@ def run_experiments(
                 "status": r.status,
                 "duration_seconds": round(r.duration_seconds, 2),
                 "metrics": r.metrics,
+                "train_metrics": r.train_metrics,
                 "error": r.error_message[:200] if r.error_message else None,
             }
             for r in results

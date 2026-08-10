@@ -47,12 +47,20 @@ _REGISTRY: dict[str, tuple[str, str]] = {
 
     "xgboost.XGBClassifier": ("xgboost", "XGBClassifier"),
     "xgboost.XGBRegressor": ("xgboost", "XGBRegressor"),
+    "xgboost.XGBoostClassifier": ("xgboost", "XGBClassifier"),
+    "xgboost.XGBoostRegressor": ("xgboost", "XGBRegressor"),
+    "XGBClassifier": ("xgboost", "XGBClassifier"),
+    "XGBRegressor": ("xgboost", "XGBRegressor"),
 
     "lightgbm.LGBMClassifier": ("lightgbm", "LGBMClassifier"),
     "lightgbm.LGBMRegressor": ("lightgbm", "LGBMRegressor"),
+    "LGBMClassifier": ("lightgbm", "LGBMClassifier"),
+    "LGBMRegressor": ("lightgbm", "LGBMRegressor"),
 
     "catboost.CatBoostClassifier": ("catboost", "CatBoostClassifier"),
     "catboost.CatBoostRegressor": ("catboost", "CatBoostRegressor"),
+    "CatBoostClassifier": ("catboost", "CatBoostClassifier"),
+    "CatBoostRegressor": ("catboost", "CatBoostRegressor"),
 }
 
 _RANDOM_STATE_KEY: dict[str, str] = {
@@ -83,19 +91,30 @@ def _import_class(module_path: str, class_name: str) -> type:
     return getattr(module, class_name)
 
 
-def _resolve_library_key(library_key: str) -> tuple[str, str]:
+def _resolve_library_key(library_key: str, task_type: str = "binary_classification") -> tuple[str, str]:
     """
     Resolve a library string to (module_path, class_name).
 
-    First checks the static registry, then falls back to dynamic import
-    by treating the last dotted segment as the class name and the rest as
-    the module path. This handles any valid Python import path the LLM
-    might generate.
+    Handles exact registry matches, shorthand family names (xgboost, catboost, lightgbm),
+    and dynamic import fallbacks.
     """
-    if library_key in _REGISTRY:
-        return _REGISTRY[library_key]
+    key = library_key.strip()
+    if key in _REGISTRY:
+        return _REGISTRY[key]
 
-    parts = library_key.rsplit(".", 1)
+    is_regression = task_type == "regression"
+    key_lower = key.lower()
+
+    if key_lower in {"xgboost", "xgb", "xgboost.xgb"}:
+        return ("xgboost", "XGBRegressor" if is_regression else "XGBClassifier")
+    if key_lower in {"catboost", "catboost.catboost", "cb"}:
+        return ("catboost", "CatBoostRegressor" if is_regression else "CatBoostClassifier")
+    if key_lower in {"lightgbm", "lgb", "lgbm", "lightgbm.lgbm"}:
+        return ("lightgbm", "LGBMRegressor" if is_regression else "LGBMClassifier")
+    if key_lower in {"randomforest", "rf", "sklearn.randomforest"}:
+        return ("sklearn.ensemble", "RandomForestRegressor" if is_regression else "RandomForestClassifier")
+
+    parts = key.rsplit(".", 1)
     if len(parts) == 2:
         module_path, class_name = parts
         try:
@@ -103,7 +122,6 @@ def _resolve_library_key(library_key: str) -> tuple[str, str]:
             return module_path, class_name
         except (ImportError, AttributeError):
             pass
-
 
     raise ValueError(
         f"Unknown model library '{library_key}'. "
@@ -136,27 +154,27 @@ def resolve_estimator(
         ValueError: If the library string is not recognised.
     """
     library_key = candidate.library.strip()
-    module_path, class_name = _resolve_library_key(library_key)
+    module_path, class_name = _resolve_library_key(library_key, task_type=task_type)
     cls = _import_class(module_path, class_name)
 
     params: dict[str, Any] = {}
 
     if class_name not in _NO_RANDOM_STATE:
-        family = library_key.split(".")[0]
+        family = module_path.split(".")[0]
         seed_key = _RANDOM_STATE_KEY.get(family, "random_state")
         params[seed_key] = random_seed
 
     if handle_imbalance:
         if class_name in _SUPPORTS_CLASS_WEIGHT:
             params["class_weight"] = "balanced"
-        elif class_name in _SUPPORTS_SCALE_POS_WEIGHT:
+        elif class_name in _SUPPORTS_SCALE_POS_WEIGHT and task_type == "binary_classification":
             params["scale_pos_weight"] = 1
-        elif class_name in _SUPPORTS_IS_UNBALANCE:
+        elif class_name in _SUPPORTS_IS_UNBALANCE and task_type == "binary_classification":
             params["is_unbalance"] = True
         elif class_name in _SUPPORTS_AUTO_CLASS_WEIGHTS:
             params["auto_class_weights"] = "Balanced"
 
-    family = library_key.split(".")[0]
+    family = module_path.split(".")[0]
     if family == "catboost":
         params["verbose"] = 0
 

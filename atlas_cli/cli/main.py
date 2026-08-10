@@ -6,6 +6,7 @@ from atlas_cli.cli.commands.analyze_cmd import analyze
 from atlas_cli.cli.commands.plan_cmd import plan
 from atlas_cli.cli.commands.experiment_cmd import experiment
 from atlas_cli.cli.commands.compare_cmd import compare
+from atlas_cli.cli.commands.review_cmd import review
 from atlas_cli.cli.commands.explain_cmd import explain
 from atlas_cli.cli.commands.report_cmd import report
 from atlas_cli.cli.commands.deploy_cmd import deploy
@@ -32,6 +33,7 @@ app.command("analyze",    help="Analyze dataset: schema, profiling, risk assessm
 app.command("plan",       help="Generate LLM-driven preprocessing and model plan.")(plan)
 app.command("experiment", help="Execute parallel multi-model training experiments.")(experiment)
 app.command("compare",    help="Compare experiments with multi-objective scoring.")(compare)
+app.command("review",     help="AI Reviewer: auto-diagnose model issues & execute critique-and-refine retry loop.")(review)
 app.command("explain",    help="SHAP feature importance and model explanation.")(explain)
 app.command("report",     help="Generate Markdown and HTML executive reports.")(report)
 app.command("deploy",     help="Scaffold production FastAPI inference microservice.")(deploy)

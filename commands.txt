@@ -1,0 +1,237 @@
+===============================================================================
+                     ATLAS CLI - ALL PROJECT COMMANDS
+===============================================================================
+
+-------------------------------------------------------------------------------
+1. INSTALLATION & SETUP COMMANDS
+-------------------------------------------------------------------------------
+
+# Create Python Virtual Environment (Windows / PowerShell)
+python -m venv .venv
+
+# Activate Virtual Environment (PowerShell)
+.venv\Scripts\Activate.ps1
+
+# Activate Virtual Environment (Command Prompt)
+.venv\Scripts\activate.bat
+
+# Install Dependencies
+pip install -r requirements.txt
+
+# Install Atlas CLI Package in Editable Mode
+pip install -e .
+
+
+-------------------------------------------------------------------------------
+2. DOCKER & INFRASTRUCTURE COMMANDS
+-------------------------------------------------------------------------------
+
+# Start Postgres and Redis Services
+docker compose up -d
+
+# Stop Postgres and Redis Services
+docker compose down
+
+# View Running Container Logs
+docker compose logs -f
+
+
+-------------------------------------------------------------------------------
+3. ATLAS CLI COMMANDS & SYNTAX
+-------------------------------------------------------------------------------
+
+Entrypoints: 'atlas', 'atlas-cli', or 'python -m atlas_cli.cli.main'
+
+--- 3.1 INITIALIZATION ---
+Command:
+  atlas init
+
+Description:
+  Initialize local Atlas CLI workspace, SQLite database, and directory structure.
+
+Usage Example:
+  atlas init
+
+
+--- 3.2 DATASET INTELLIGENCE (ANALYZE) ---
+Command:
+  atlas analyze <file_path> [OPTIONS]
+
+Description:
+  Analyze dataset file (CSV, Parquet, JSON) for schema inference, profiling, and quality risk assessment.
+
+Arguments:
+  <file_path>                  Path to dataset file (Required)
+
+Options:
+  --target, -t TEXT            Target column name for imbalance and leakage analysis
+  --run-id, -r TEXT            Run ID to associate this analysis with (auto-generated if omitted)
+
+Usage Examples:
+  atlas analyze Iris.csv
+  atlas analyze Iris.csv --target Species
+  atlas analyze heart.csv --target target --run-id 0c80fc43
+
+
+--- 3.3 PIPELINE PLANNER (PLAN) ---
+Command:
+  atlas plan <file_path> --goal <goal> [OPTIONS]
+
+Description:
+  Generate an LLM-driven ML execution plan (preprocessing, feature engineering, candidate models, evaluation).
+
+Arguments:
+  <file_path>                  Path to dataset file (Required)
+
+Options:
+  --goal, -g TEXT              Natural-language prediction/analysis goal (Required)
+  --target, -t TEXT            Target column name
+  --run-id, -r TEXT            Reuse an existing run ID (skips re-analysis)
+  --model, -m TEXT             LLM model override (e.g., groq/llama-3.3-70b-versatile, gpt-4o)
+
+Usage Examples:
+  atlas plan Iris.csv --goal "classify iris species" --target Species
+  atlas plan heart.csv --goal "predict heart disease" --target target --model groq/llama-3.3-70b-versatile
+  atlas plan Iris.csv --goal "predict species" --run-id a98d5937
+
+
+--- 3.4 EXPERIMENTATION ENGINE (EXPERIMENT) ---
+Command:
+  atlas experiment [OPTIONS]
+
+Description:
+  Execute parallel multi-model training experiments for a given run plan.
+
+Options:
+  --run-id, -r TEXT            Run ID of execution plan (Defaults to most recent run)
+  --parallel, -p INT           Maximum concurrent training workers (Default: 4)
+  --file-path, -f PATH         Dataset file path override
+  --seed, -s INT               Random seed for reproducibility (Default: 42)
+
+Usage Examples:
+  atlas experiment
+  atlas experiment --run-id 0c80fc43
+  atlas experiment --parallel 4 --seed 42
+
+
+--- 3.5 EXPERIMENT COMPARATOR (COMPARE) ---
+Command:
+  atlas compare [OPTIONS]
+
+Description:
+  Compare experiment results with multi-objective scoring and declare optimal candidate.
+
+Options:
+  --run-id, -r TEXT            Run ID to evaluate (Defaults to most recent run)
+
+Usage Examples:
+  atlas compare
+  atlas compare --run-id 0c80fc43
+
+
+--- 3.6 AI REVIEWER & AUTO-CRITIQUE (REVIEW) ---
+Command:
+  atlas review [OPTIONS]
+
+Description:
+  Auto-diagnose model issues (overfitting, underfitting) and execute critique-and-refine retry loop.
+
+Options:
+  --run-id, -r TEXT            Run ID to review (Defaults to most recent run)
+  --seed, -s INT               Random seed for refined training (Default: 42)
+  --model, -m TEXT             LLM model string override for reflection critique
+
+Usage Examples:
+  atlas review
+  atlas review --run-id 0c80fc43 --seed 123
+
+
+--- 3.7 MODEL EXPLAINABILITY (EXPLAIN) ---
+Command:
+  atlas explain [OPTIONS]
+
+Description:
+  Run SHAP analysis, generate beeswarm/bar charts, and produce plain-English explanations.
+
+Options:
+  --exp-id, -e TEXT            Experiment ID / model name to explain (Defaults to winning model)
+  --run-id, -r TEXT            Run ID of experiment workflow (Defaults to latest run)
+  --model, -m TEXT             LLM model string override for narrative generation
+
+Usage Examples:
+  atlas explain
+  atlas explain --run-id 0c80fc43
+  atlas explain --exp-id "Gradient Boosting Classifier" --run-id 0c80fc43
+
+
+--- 3.8 EXECUTIVE REPORTING (REPORT) ---
+Command:
+  atlas report [OPTIONS]
+
+Description:
+  Compile dataset summaries, model metrics, charts, and explanations into Markdown and HTML reports.
+
+Options:
+  --run-id, -r TEXT            Run ID of experiment workflow (Defaults to latest run)
+  --out, -o TEXT               Output directory for generated reports (Default: ./reports)
+
+Usage Examples:
+  atlas report
+  atlas report --run-id 0c80fc43 --out ./heart_report
+
+
+--- 3.9 DEPLOYMENT SCAFFOLDING (DEPLOY) ---
+Command:
+  atlas deploy [OPTIONS]
+
+Description:
+  Scaffold production FastAPI inference microservice directory for selected model.
+
+Options:
+  --exp-id, -e TEXT            Experiment ID / model name to package (Defaults to winning model)
+  --out, -o TEXT               Target microservice scaffold directory (Default: ./deploy)
+  --run-id, -r TEXT            Run ID of experiment workflow (Defaults to latest run)
+
+Usage Examples:
+  atlas deploy
+  atlas deploy --run-id 0c80fc43 --out ./service
+  atlas deploy --exp-id "Gradient Boosting Classifier" --out ./service
+
+
+--- 3.10 REPRODUCIBILITY REPLAY (REPLAY) ---
+Command:
+  atlas replay <run_id>
+
+Description:
+  Reload run metadata, dataset SHA256 hashes, random seeds, and pipeline config to execute exact replay.
+
+Arguments:
+  <run_id>                     Run ID of experiment to reproduce (Required)
+
+Usage Examples:
+  atlas replay 0c80fc43
+
+
+--- 3.11 NATURAL LANGUAGE ASSISTANT (ASK) ---
+Command:
+  atlas ask <query>
+
+Description:
+  Query workspace metadata, dataset risks, and experiment results using AI reasoning.
+
+Arguments:
+  <query>                      Natural language query about workspace (Required)
+
+Usage Examples:
+  atlas ask "What was the best performing model for run 0c80fc43?"
+  atlas ask "Are there missing values or data leakage risks in Iris.csv?"
+
+
+-------------------------------------------------------------------------------
+4. HELP COMMANDS
+-------------------------------------------------------------------------------
+
+atlas --help
+atlas-cli --help
+python -m atlas_cli.cli.main --help
+atlas <command> --help

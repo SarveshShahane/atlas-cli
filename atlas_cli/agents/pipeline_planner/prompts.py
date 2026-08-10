@@ -18,6 +18,10 @@ Rules:
 - Choose model candidates suited to the dataset size, feature types, and task type.
 - Base all decisions on the dataset metadata and risks provided — do not make assumptions.
 - For model_candidates, include 3–5 models ranked by expected suitability (priority 1 = best fit).
+- For tabular data, strongly consider modern gradient boosted tree models (XGBoost, CatBoost, LightGBM) alongside classical baselines (Random Forest, Logistic Regression, SVC).
+- Supported `library` strings:
+  - Classification: `xgboost.XGBClassifier`, `catboost.CatBoostClassifier`, `lightgbm.LGBMClassifier`, `sklearn.ensemble.RandomForestClassifier`, `sklearn.ensemble.ExtraTreesClassifier`, `sklearn.ensemble.GradientBoostingClassifier`, `sklearn.linear_model.LogisticRegression`, `sklearn.svm.SVC`, `sklearn.neighbors.KNeighborsClassifier`
+  - Regression: `xgboost.XGBRegressor`, `catboost.CatBoostRegressor`, `lightgbm.LGBMRegressor`, `sklearn.ensemble.RandomForestRegressor`, `sklearn.ensemble.ExtraTreesRegressor`, `sklearn.ensemble.GradientBoostingRegressor`, `sklearn.linear_model.Ridge`, `sklearn.svm.SVR`, `sklearn.neighbors.KNeighborsRegressor`
 - The "reasoning" field must explain your key decisions in 2–4 sentences."""
 
 
@@ -89,10 +93,22 @@ def build_user_prompt(
   },
   "model_candidates": [
     {
-      "name": "<Model Name>",
-      "library": "<e.g. xgboost.XGBClassifier>",
-      "rationale": "<one sentence>",
+      "name": "XGBoost Classifier",
+      "library": "xgboost.XGBClassifier",
+      "rationale": "High accuracy on tabular data with non-linear relationships.",
       "priority": 1
+    },
+    {
+      "name": "CatBoost Classifier",
+      "library": "catboost.CatBoostClassifier",
+      "rationale": "Excellent default performance and robust categorical feature handling.",
+      "priority": 2
+    },
+    {
+      "name": "Random Forest Classifier",
+      "library": "sklearn.ensemble.RandomForestClassifier",
+      "rationale": "Solid ensemble baseline resistant to overfitting.",
+      "priority": 3
     }
   ],
   "evaluation": {

@@ -29,6 +29,7 @@ class ExperimentResult:
     library: str
     status: str = "pending"         
     metrics: dict[str, float] = field(default_factory=dict)
+    train_metrics: dict[str, float] = field(default_factory=dict)
     duration_seconds: float = 0.0
     estimator: Optional[Any] = None  
     error_message: Optional[str] = None
@@ -85,14 +86,24 @@ def train_single_model(args: WorkerArgs) -> ExperimentResult:
         logger.info(f"[{candidate.name}] Training started...")
         estimator.fit(args.X_train, args.y_train)
 
+        # Validation metrics
         y_pred = estimator.predict(args.X_val)
-
         result.metrics = compute_metrics(
             args.y_val,
             y_pred,
             task_type=args.task_type,
             estimator=estimator,
             X_val=args.X_val,
+        )
+
+        # Training metrics (for overfitting detection in Reviewer agent)
+        y_train_pred = estimator.predict(args.X_train)
+        result.train_metrics = compute_metrics(
+            args.y_train,
+            y_train_pred,
+            task_type=args.task_type,
+            estimator=estimator,
+            X_val=args.X_train,
         )
 
         result.estimator = estimator
