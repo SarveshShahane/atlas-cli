@@ -17,7 +17,7 @@ Rules:
 - The JSON must exactly match the schema described by the user.
 - Choose model candidates suited to the dataset size, feature types, and task type.
 - Base all decisions on the dataset metadata and risks provided — do not make assumptions.
-- If high multicollinearity features (VIF >= 10.0) or high correlation pairs are present, include redundant columns in `preprocessing.drop_columns`.
+- If high multicollinearity features (VIF >= 10.0) or high correlation pairs are present, report them in `preprocessing.notes` as a diagnostic. Do NOT automatically add correlated features to `preprocessing.drop_columns` — tree-based models (Random Forest, XGBoost, CatBoost, LightGBM) handle collinearity well. Only drop truly non-predictive columns (IDs, zero-variance, data leakage suspects). For linear models, note that regularization (L1/L2) mitigates multicollinearity.
 - If target imbalance is detected, set `evaluation.handle_imbalance: true` and select `evaluation.cv_strategy: "stratified_kfold"`.
 - If datetime or time-series features are present, consider setting `evaluation.cv_strategy: "timeseries_split"`.
 - For model_candidates, include 3–5 models ranked by expected suitability (priority 1 = best fit).

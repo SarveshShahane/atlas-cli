@@ -12,6 +12,7 @@ import uuid
 import typer
 from rich.console import Console
 from rich.panel import Panel
+from rich.table import Table
 from rich.tree import Tree
 
 from atlas_cli.cli.commands.analyze_cmd import analyze
@@ -20,6 +21,7 @@ from atlas_cli.cli.commands.plan_cmd import plan
 from atlas_cli.cli.commands.experiment_cmd import experiment
 from atlas_cli.cli.commands.report_cmd import report
 from atlas_cli.cli.commands.export_cmd import export
+from atlas_cli.agents.experimentation.consistency import run_consistency_checks
 from atlas_cli.core.config import settings
 
 console = Console()
@@ -34,6 +36,10 @@ def run_pipeline(
     output_format: str = typer.Option("csv", "--format", "-f", help="Output format for datasets: 'csv' or 'parquet'"),
     run_id: Optional[str] = typer.Option(None, "--run-id", "-r", help="Run ID for workspace isolation (auto-generated if omitted)"),
     test_size: Optional[float] = typer.Option(None, "--test-size", "-ts", help="Custom test split ratio override (e.g. 0.2 for 20% test split)"),
+    outlier_action: str = typer.Option("report", "--outlier-action", help="Outlier handling: 'report' (default, diagnostic only) or 'cap' (IQR Winsorization)"),
+    anomaly_action: str = typer.Option("report", "--anomaly-action", "-a", help="Anomaly handling: 'report' (default, keep all rows), 'flag' (add flag column), 'remove' (delete rows)"),
+    no_vif_drop: bool = typer.Option(True, "--no-vif-drop", help="Disable automatic high-VIF column dropping (default: True, VIF is diagnostic only)"),
+    no_outlier_cap: bool = typer.Option(True, "--no-outlier-cap", help="Legacy flag: disable outlier capping (default: True)"),
 ) -> None:
     """
     Execute the entire Autonomous Data Science Pipeline end-to-end.
@@ -49,6 +55,32 @@ def run_pipeline(
     Example:
       atlas run Iris.csv -g "Predict species" -i Id
     """
+    # Normalize potential Typer default wrapper objects if called programmatically
+    if not isinstance(anomaly_action, str):
+        anomaly_action = getattr(anomaly_action, "default", "report")
+        if not isinstance(anomaly_action, str):
+            anomaly_action = "report"
+
+    if not isinstance(outlier_action, str):
+        outlier_action = getattr(outlier_action, "default", "report")
+        if not isinstance(outlier_action, str):
+            outlier_action = "report"
+
+    if not isinstance(output_format, str):
+        output_format = getattr(output_format, "default", "csv")
+        if not isinstance(output_format, str):
+            output_format = "csv"
+
+    if not isinstance(no_vif_drop, bool):
+        no_vif_drop = getattr(no_vif_drop, "default", True)
+        if not isinstance(no_vif_drop, bool):
+            no_vif_drop = True
+
+    if not isinstance(no_outlier_cap, bool):
+        no_outlier_cap = getattr(no_outlier_cap, "default", True)
+        if not isinstance(no_outlier_cap, bool):
+            no_outlier_cap = True
+
     if not file_path.exists():
         console.print(f"[bold red]Error:[/bold red] File not found: {file_path}")
         raise typer.Exit(code=1)
@@ -59,11 +91,14 @@ def run_pipeline(
 
     console.rule(f"[bold green]🚀 Atlas Pipeline Execution — Run ID: {effective_run_id}[/bold green]")
     console.print(Panel(
-        f"[bold]Dataset:[/bold]     {file_path.resolve()}\n"
-        f"[bold]Goal:[/bold]        {goal}\n"
-        f"[bold]Workspace:[/bold]   {run_dir.resolve()}\n"
-        f"[bold]Target Override:[/bold] {target or 'Auto-detect'}\n"
-        f"[bold]Ignored Cols:[/bold]    {ignore or 'None'}",
+        f"[bold]Dataset:[/bold]          {file_path.resolve()}\n"
+        f"[bold]Goal:[/bold]             {goal}\n"
+        f"[bold]Workspace:[/bold]        {run_dir.resolve()}\n"
+        f"[bold]Target Override:[/bold]  {target or 'Auto-detect'}\n"
+        f"[bold]Ignored Cols:[/bold]     {ignore or 'None'}\n"
+        f"[bold]Outlier Action:[/bold]   {outlier_action}\n"
+        f"[bold]Anomaly Action:[/bold]   {anomaly_action}\n"
+        f"[bold]VIF Strategy:[/bold]     {'Diagnostic only (keep features)' if no_vif_drop else 'Drop collinear features (VIF >= 10)'}",
         title="[bold cyan]📋 Pipeline Context[/bold cyan]",
         border_style="cyan",
     ))
@@ -80,7 +115,16 @@ def run_pipeline(
     # Stage 2: Clean
     console.rule("[bold cyan]Stage 2/6: Dataset Hygiene & Outlier Cleaning[/bold cyan]")
     try:
-        clean(file_path=file_path, target=target, ignore=ignore, output=None, run_id=effective_run_id)
+        clean(
+            file_path=file_path,
+            target=target,
+            ignore=ignore,
+            output=None,
+            run_id=effective_run_id,
+            no_vif_drop=no_vif_drop,
+            outlier_action=outlier_action,
+            anomaly_action=anomaly_action,
+        )
     except SystemExit as exc:
         if exc.code != 0:
             console.print("[bold red]Pipeline halted at Stage 2 (Clean).[/bold red]")
@@ -96,9 +140,12 @@ def run_pipeline(
             raise exc
 
     # Stage 4: Experiment
+    # NOTE: file_path is intentionally NOT passed here — the experiment runner
+    # must load cleaned_data.csv from the run directory to preserve the
+    # cleaning stage's output (correct row count, removed anomalies, etc.).
     console.rule("[bold cyan]Stage 4/6: Leakage-Free Experimentation & Model Training[/bold cyan]")
     try:
-        experiment(run_id=effective_run_id, file_path=file_path, ignore=ignore, parallel=4, seed=42, test_size=test_size)
+        experiment(run_id=effective_run_id, file_path=None, ignore=ignore, parallel=4, seed=42, test_size=test_size)
     except SystemExit as exc:
         if exc.code != 0:
             console.print("[bold red]Pipeline halted at Stage 4 (Experiment).[/bold red]")
@@ -121,6 +168,23 @@ def run_pipeline(
         if exc.code != 0:
             console.print("[dim yellow]Warning: Dataset export encountered an issue.[/dim yellow]")
 
+    # ── Automated End-of-Pipeline Consistency Validation Gate ────────────
+    console.rule("[bold cyan]🛡️ Pipeline Consistency & Integrity Validation Gate[/bold cyan]")
+    all_passed, passed_checks, warning_checks, fail_checks = run_consistency_checks(effective_run_id)
+
+    chk_table = Table(title="Validation Gate Results", border_style="cyan", header_style="bold cyan")
+    chk_table.add_column("Check Description", style="white", min_width=40)
+    chk_table.add_column("Status", justify="center", min_width=10)
+
+    for p in passed_checks:
+        chk_table.add_row(p, "[bold green]PASS[/bold green]")
+    for w in warning_checks:
+        chk_table.add_row(w, "[bold yellow]WARN[/bold yellow]")
+    for f in fail_checks:
+        chk_table.add_row(f, "[bold red]FAIL[/bold red]")
+
+    console.print(chk_table)
+
     # Summary Tree of Isolated Run Workspace
     tree = Tree(f"[bold green]📂 Isolated Run Workspace: {effective_run_id}[/bold green]")
     tree.add("[cyan]analysis/[/cyan] (dataset_summary.json, quality_report.json, risk_assessment.json)")
@@ -134,10 +198,25 @@ def run_pipeline(
 
     console.rule("[bold green]🎉 End-to-End Pipeline Execution Complete[/bold green]")
     console.print(tree)
+
+    if not all_passed:
+        fail_reasons = "\n".join(f"  • {f}" for f in fail_checks)
+        console.print(Panel(
+            f"[bold red]Pipeline failed integrity validation gate:[/bold red]\n{fail_reasons}\n\n"
+            f"[bold]Run Workspace Directory:[/bold]\n"
+            f"[dim]{run_dir.resolve()}[/dim]\n"
+            f"[bold]Consistency Gate:[/bold] [bold red]FAILED[/bold red]",
+            title="[bold red]❌ Integrity Gate Failed[/bold red]",
+            border_style="red",
+        ))
+        raise typer.Exit(code=1)
+
+    gate_status = "[bold green]PASSED[/bold green]" if not warning_checks else "[bold yellow]PASSED WITH WARNINGS[/bold yellow]"
     console.print(Panel(
         f"[bold green]Successfully completed all 6 pipeline stages![/bold green]\n"
         f"[bold]Run Workspace Directory:[/bold]\n"
-        f"[dim]{run_dir.resolve()}[/dim]",
+        f"[dim]{run_dir.resolve()}[/dim]\n"
+        f"[bold]Consistency Gate:[/bold] {gate_status}",
         title="[bold green]✅ Pipeline Success[/bold green]",
         border_style="green",
     ))

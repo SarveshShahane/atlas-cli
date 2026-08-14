@@ -147,6 +147,7 @@ def collect_report_data(run_id: str) -> dict[str, Any]:
             "num_failed": experiments.get("num_failed", 0),
             "primary_metric": experiments.get("primary_metric", "accuracy"),
             "items_list": experiments.get("experiments", []),
+            "winner": experiments.get("winner"),  # Winner info from experiment runner
         }
 
     # ── Comparison Results ───────────────────────────────────────────────
@@ -159,6 +160,40 @@ def collect_report_data(run_id: str) -> dict[str, Any]:
             "num_compared": comparison.get("num_compared", 0),
             "winner": comparison.get("winner"),
             "rankings": comparison.get("rankings", []),
+        }
+    elif experiments and experiments.get("winner", {}).get("model_name"):
+        # Fallback: derive comparison-like winner from experiment results
+        exp_winner = experiments["winner"]
+        primary_metric = experiments.get("primary_metric", "accuracy")
+        test_metrics = exp_winner.get("test_metrics", {})
+        test_score = test_metrics.get(primary_metric, 0.0) if test_metrics else 0.0
+        cv_score = exp_winner.get("cv_f1_macro_mean") or exp_winner.get("cv_accuracy_mean") or 0.0
+
+        # Look up library from experiment list
+        exp_list = experiments.get("experiments", [])
+        lib_name = "sklearn"
+        for e in exp_list:
+            if e.get("model_name") == exp_winner.get("model_name"):
+                lib_name = e.get("library", "sklearn")
+                break
+
+        ctx["has_comparison"] = True
+        ctx["comparison"] = {
+            "task_type": experiments.get("task_type", "Unknown"),
+            "primary_metric": primary_metric,
+            "num_compared": experiments.get("num_succeeded", 0),
+            "winner": {
+                "model_name": exp_winner.get("model_name"),
+                "library": lib_name,
+                "reason": exp_winner.get("reason", "Best CV performance"),
+                "composite_score": cv_score,
+                "primary_metric_test": test_score,
+                "primary_metric_cv": cv_score,
+                "cv_accuracy_mean": exp_winner.get("cv_accuracy_mean"),
+                "cv_f1_macro_mean": exp_winner.get("cv_f1_macro_mean"),
+                "test_metrics": test_metrics,
+            },
+            "rankings": [],
         }
 
     # ── AI Reviewer Critique ─────────────────────────────────────────────

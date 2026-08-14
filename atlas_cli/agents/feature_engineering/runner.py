@@ -68,11 +68,24 @@ def process_feature_engineering(
     columns = [ColumnSchema(**c) if isinstance(c, dict) else c for c in cols_data]
     schema = SchemaReport(columns=columns, num_rows=schema_dict.get("num_rows", 0))
 
+    # ── Dataset Loading Priority ──────────────────────────────────────────
+    # Always prefer the cleaned dataset from Stage 2 to ensure the pipeline
+    # respects cleaning decisions (anomaly removal, column drops, etc.).
     cleaned_csv = run_dir / "cleaned_data.csv"
-    if file_path:
-        dataset_file = file_path
-    elif cleaned_csv.exists():
+    cleaned_sub = run_dir / "cleaned" / "cleaned_data.csv"
+
+    if cleaned_csv.exists():
         dataset_file = cleaned_csv
+        logger.info(f"Using cleaned dataset from Stage 2: {cleaned_csv}")
+    elif cleaned_sub.exists():
+        dataset_file = cleaned_sub
+        logger.info(f"Using cleaned dataset from Stage 2: {cleaned_sub}")
+    elif file_path:
+        dataset_file = file_path
+        logger.warning(
+            f"No cleaned_data.csv found — falling back to raw dataset: {file_path}. "
+            "This means cleaning stage output was not preserved."
+        )
     else:
         raw_file = Path(summary_dict.get("file_name", ""))
         if not raw_file.exists():
@@ -81,7 +94,7 @@ def process_feature_engineering(
                 raw_file = cwd_match
             else:
                 raise FileNotFoundError(f"Source dataset file '{raw_file}' not found.")
-        
+
         logger.info(f"No cleaned_data.csv found for run '{run_id}'. Auto-executing dataset cleaning...")
         ignore_cols = list(plan.preprocessing.drop_columns or [])
         clean_dataset(
@@ -139,7 +152,11 @@ def process_feature_engineering(
     try:
         feature_names = list(pipeline.get_feature_names_out())
     except Exception:
-        feature_names = [f"feature_{i}" for i in range(X_train.shape[1])]
+        # Fallback: use original column names if they match the output dimension
+        if hasattr(X_train_raw, 'columns') and len(X_train_raw.columns) == X_train.shape[1]:
+            feature_names = list(X_train_raw.columns)
+        else:
+            feature_names = [f"feature_{i}" for i in range(X_train.shape[1])]
 
     features_dir = run_dir / "features"
     features_dir.mkdir(parents=True, exist_ok=True)

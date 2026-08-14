@@ -13,7 +13,7 @@ from rich.panel import Panel
 from rich.table import Table
 from rich.text import Text
 
-from atlas_cli.agents.experimentation.runner import run_experiments
+from atlas_cli.agents.experimentation.runner import run_experiments, select_winner
 from atlas_cli.agents.experimentation.worker import ExperimentResult
 from atlas_cli.core.config import settings
 
@@ -34,66 +34,114 @@ def _find_latest_run_id() -> Optional[str]:
 
 
 def _render_results(results: list[ExperimentResult], run_id: str, primary_metric: str) -> None:
-    """Render experiment results as a rich summary table."""
+    """Render experiment results as a rich summary table with CV, val, and test metrics."""
     table = Table(
-        title="⚡ Experiment Results",
+        title="⚡ Experiment Results (CV + Validation + Test)",
         border_style="cyan",
         header_style="bold cyan",
         show_lines=True,
     )
     table.add_column("#", justify="center", width=4)
-    table.add_column("Model", style="bold white", min_width=18)
-    table.add_column("Status", justify="center", min_width=8)
-    table.add_column(primary_metric.upper(), justify="right", min_width=10)
-    table.add_column("Top Feature", style="dim", justify="center")
-    table.add_column("Duration", justify="right", min_width=10)
+    table.add_column("Model", style="bold white", min_width=16)
+    table.add_column("Status", justify="center", min_width=6)
+    table.add_column("CV Acc Mean", justify="right", min_width=10)
+    table.add_column("CV Acc Std", justify="right", min_width=9)
+    table.add_column("CV F1 Macro", justify="right", min_width=10)
+    table.add_column("Val Acc", justify="right", min_width=8)
+    table.add_column("Test Acc", justify="right", min_width=8)
+    table.add_column("Scaling", justify="center", min_width=14)
+    table.add_column("Duration", justify="right", min_width=8)
 
+    # Sort by CV f1_macro mean (or val metric as fallback)
     successful = sorted(
         [r for r in results if r.status == "success"],
-        key=lambda r: r.metrics.get(primary_metric, 0),
+        key=lambda r: (r.cv_results.f1_macro_mean if r.cv_results else 0.0),
         reverse=True,
     )
     failed = [r for r in results if r.status == "failed"]
     ordered = successful + failed
 
+    # Determine winner
+    plan_data = None
+    run_dir = settings.workspace_dir / "runs" / run_id
+    plan_file = run_dir / "execution_plan.json"
+    if plan_file.exists():
+        plan_data = json.loads(plan_file.read_text(encoding="utf-8"))
+    task_type = plan_data.get("task_type", "multiclass_classification") if plan_data else "multiclass_classification"
+
+    winner = None
+    winner_reason = ""
+    try:
+        winner, winner_reason = select_winner(results, task_type)
+    except Exception:
+        if successful:
+            winner = successful[0]
+            winner_reason = "Highest validation metric"
+
     for i, result in enumerate(ordered, 1):
         is_ensemble = result.model_name == "Weighted Ensemble"
+        is_winner = winner and result.model_name == winner.model_name
         status_text = (
             Text("✓ OK", style="bold green")
             if result.status == "success"
             else Text("✗ FAIL", style="bold red")
         )
-        metric_val = (
-            f"{result.metrics.get(primary_metric, 0):.4f}"
-            if result.status == "success"
-            else "—"
-        )
+
+        cv = result.cv_results
+        cv_acc = f"{cv.accuracy_mean:.4f}" if cv else "—"
+        cv_std = f"±{cv.accuracy_std:.4f}" if cv else "—"
+        cv_f1 = f"{cv.f1_macro_mean:.4f}" if cv else "—"
+        val_acc = f"{result.metrics.get('accuracy', 0):.4f}" if result.status == "success" else "—"
+        test_acc = f"{result.test_metrics.get('accuracy', 0):.4f}" if result.test_metrics else "—"
+        scaling_name = "StandardScaler" if getattr(result, 'uses_scaling', False) else "None"
         duration = f"{result.duration_seconds:.2f}s"
 
-        top_feat = "—"
-        if result.feature_importances:
-            top_name, top_val = next(iter(result.feature_importances.items()))
-            top_feat = f"{top_name} ({top_val:.2f})"
-        elif is_ensemble:
-            top_feat = "Soft Voting Blend"
+        name_style = "bold green" if is_ensemble else ("bold yellow" if is_winner else "bold white")
+        model_display = Text(
+            f"{'🏆 ' if is_winner else ''}{result.model_name}",
+            style=name_style,
+        )
 
-        model_display = Text(result.model_name, style="bold green" if is_ensemble else "bold white")
-        table.add_row(str(i), model_display, status_text, Text(metric_val, style="bold cyan" if is_ensemble else "white"), top_feat, duration)
+        table.add_row(
+            str(i), model_display, status_text,
+            Text(cv_acc, style="bold cyan" if is_winner else "white"),
+            cv_std, cv_f1, val_acc, test_acc, scaling_name, duration,
+        )
 
     console.print(table)
 
-    if successful:
-        best = successful[0]
-        metrics_lines = "\n".join(
-            f"  [cyan]{k}:[/cyan] {v:.4f}" for k, v in sorted(best.metrics.items())
+    if winner:
+        cv = winner.cv_results
+        val_lines = "\n".join(
+            f"  [cyan]{k}:[/cyan] {v:.4f}" for k, v in sorted(winner.metrics.items())
         )
+        test_lines = "\n".join(
+            f"  [cyan]{k}:[/cyan] {v:.4f}" for k, v in sorted(winner.test_metrics.items())
+        ) if winner.test_metrics else "  [dim]Not evaluated[/dim]"
+        cv_lines = (
+            f"  [cyan]accuracy:[/cyan] {cv.accuracy_mean:.4f} ± {cv.accuracy_std:.4f}\n"
+            f"  [cyan]f1_macro:[/cyan] {cv.f1_macro_mean:.4f} ± {cv.f1_macro_std:.4f}\n"
+            f"  [cyan]per_fold_accuracy:[/cyan] {[round(s, 4) for s in cv.per_fold_accuracy]}"
+        ) if cv else "  [dim]Not available[/dim]"
+
         console.print(Panel(
-            f"[bold green]{best.model_name}[/bold green]  ({best.library})\n"
-            f"[bold]{primary_metric}:[/bold] [cyan]{best.metrics.get(primary_metric, 0):.4f}[/cyan]\n\n"
-            f"[dim]All metrics:[/dim]\n{metrics_lines}",
-            title="[bold green]🏆 Best Model / Winner[/bold green]",
+            f"[bold green]{winner.model_name}[/bold green]  ({winner.library})\n"
+            f"[bold]Reason:[/bold] [dim]{winner_reason}[/dim]\n\n"
+            f"[bold]Cross-Validation ({cv.n_folds if cv else '?'}-fold):[/bold]\n{cv_lines}\n\n"
+            f"[bold]Validation Metrics:[/bold]\n{val_lines}\n\n"
+            f"[bold]Test Metrics (final, untouched):[/bold]\n{test_lines}",
+            title="[bold green]🏆 Winner Model[/bold green]",
             border_style="green",
         ))
+
+        # Feature importance
+        if winner.feature_importances:
+            fi_table = Table(title="📊 Feature Importance", border_style="blue", header_style="bold blue")
+            fi_table.add_column("Feature", style="white")
+            fi_table.add_column("Importance", justify="right", style="cyan")
+            for fname, fval in list(winner.feature_importances.items())[:10]:
+                fi_table.add_row(fname, f"{fval:.4f}")
+            console.print(fi_table)
 
     if failed:
         for result in failed:
@@ -206,7 +254,7 @@ def experiment(
     ))
 
     try:
-        with console.status("[cyan]Running feature engineering, early stopping & model training...[/cyan]"):
+        with console.status("[cyan]Running feature engineering, cross-validation & model training...[/cyan]"):
             results = run_experiments(
                 effective_run_id,
                 max_workers=parallel_val,

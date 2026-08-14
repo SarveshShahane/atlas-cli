@@ -30,7 +30,10 @@ ColumnType = Literal[
 
 HIGH_CARDINALITY_RATIO = 0.80
 TEXT_WORD_THRESHOLD = 5
-DATE_NAME_HINTS = {"date", "time", "year", "month", "day", "dt", "timestamp", "ts"}
+DATE_NAME_HINTS = {
+    "date", "time", "year", "month", "day", "dt", "timestamp", "ts",
+    "created", "updated", "modified", "dob",
+}
 
 # Regex patterns for specialized semantic types
 EMAIL_REGEX = re.compile(r"^[\w\.-]+@[\w\.-]+\.\w+$")
@@ -117,22 +120,21 @@ def _check_regex_type(sample: list[str]) -> ColumnType | None:
 
 
 def _infer_column_type(series: pd.Series, col_name: str) -> ColumnType:
+    """
+    Infer semantic column type with safe precedence:
+      bool → numeric/spatial → object-type (date hint → regex → datetime → categorical → text)
+    """
     n = len(series)
     if n == 0:
         return "unknown"
 
     dtype = series.dtype
 
-    if pd.api.types.is_datetime64_any_dtype(dtype) or _has_date_name_hint(col_name):
-        if pd.api.types.is_object_dtype(dtype):
-            try:
-                pd.to_datetime(series.dropna().head(50), infer_datetime_format=True)
-                return "datetime"
-            except Exception:
-                pass
-        else:
-            return "datetime"
+    # ── 1. Already parsed as datetime by pandas ──────────────────────────
+    if pd.api.types.is_datetime64_any_dtype(dtype):
+        return "datetime"
 
+    # ── 2. Boolean ───────────────────────────────────────────────────────
     if pd.api.types.is_bool_dtype(dtype):
         return "boolean"
 
@@ -140,9 +142,10 @@ def _infer_column_type(series: pd.Series, col_name: str) -> ColumnType:
     if n_unique <= 2 and pd.api.types.is_integer_dtype(dtype):
         return "boolean"
 
-    # Check spatial coordinate hint
+    # ── 3. Numeric (int / float) — checked BEFORE datetime ───────────────
     col_lower = col_name.lower()
     if pd.api.types.is_numeric_dtype(dtype):
+        # Spatial coordinate hint
         if col_lower in ("lat", "latitude", "y") or col_lower in ("lon", "lng", "longitude", "x"):
             clean = series.dropna()
             if len(clean) > 0:
@@ -153,12 +156,24 @@ def _infer_column_type(series: pd.Series, col_name: str) -> ColumnType:
 
         return "numeric"
 
+    # ── 4. Object / string columns ───────────────────────────────────────
     if pd.api.types.is_object_dtype(dtype):
+        # 4a. Datetime — checked first if date-like name hint exists
+        if _has_date_name_hint(col_name):
+            try:
+                pd.to_datetime(series.dropna().head(50))
+                return "datetime"
+            except Exception:
+                pass
+
         clean_str_sample = series.dropna().astype(str).head(30).tolist()
+
+        # 4b. Regex-based semantic types (email, IP, URL, UUID, phone)
         regex_type = _check_regex_type(clean_str_sample)
         if regex_type:
             return regex_type
 
+        # 4c. Cardinality-based classification
         unique_ratio = n_unique / max(n, 1)
 
         if unique_ratio >= HIGH_CARDINALITY_RATIO:

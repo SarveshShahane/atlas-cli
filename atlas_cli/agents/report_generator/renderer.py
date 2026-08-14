@@ -61,14 +61,24 @@ def render_report_summary(
 
     # Summary stats
     winner_name = "—"
+    winner_reason = ""
     if ctx.get("has_comparison") and ctx["comparison"].get("winner"):
-        winner_name = ctx["comparison"]["winner"]["model_name"]
+        winner_info = ctx["comparison"]["winner"]
+        winner_name = winner_info.get("model_name", "—") if isinstance(winner_info, dict) else winner_info
+        winner_reason = winner_info.get("reason", "") if isinstance(winner_info, dict) else ""
+    elif ctx.get("has_experiments") and ctx["experiments"].get("winner"):
+        exp_winner = ctx["experiments"]["winner"]
+        winner_name = exp_winner.get("model_name", "—") if isinstance(exp_winner, dict) else "—"
+        winner_reason = exp_winner.get("reason", "") if isinstance(exp_winner, dict) else ""
+
+    reason_line = f"\n[yellow]Reason:[/yellow]      [dim]{winner_reason}[/dim]" if winner_reason else ""
 
     console.print(Panel(
         f"[bold cyan]Executive Report Generated[/bold cyan]\n\n"
         f"[yellow]Run ID:[/yellow]       {ctx['run_id']}\n"
         f"[yellow]Sections:[/yellow]     [bright_green]{included}[/bright_green] / {len(sections)} included\n"
-        f"[yellow]Winner Model:[/yellow] [bright_green]{winner_name}[/bright_green]\n"
+        f"[yellow]Winner Model:[/yellow] [bright_green]{winner_name}[/bright_green]"
+        f"{reason_line}\n"
         f"[yellow]Generated:[/yellow]    {ctx['generated_at']}",
         title="[bold blue]atlas report[/bold blue]",
         border_style="cyan",

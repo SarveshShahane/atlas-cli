@@ -85,13 +85,10 @@ def build_feature_pipeline(
         if "log" in plan.feature_engineering.numeric_transforms:
             num_steps.append(("log_transform", LogTransformFeature()))
 
-        scale_strat = plan.preprocessing.scale_strategy
-        if scale_strat == "standard":
-            num_steps.append(("scaler", StandardScaler()))
-        elif scale_strat == "minmax":
-            num_steps.append(("scaler", MinMaxScaler()))
-        elif scale_strat == "robust":
-            num_steps.append(("scaler", RobustScaler()))
+        # NOTE: Scaling is intentionally NOT applied here.
+        # Scaling is handled per-model-family inside the training worker:
+        #   - Linear models (LogisticRegression, SVM) get StandardScaler via Pipeline wrapper.
+        #   - Tree-based models (RF, XGBoost, CatBoost, LightGBM) receive unscaled data.
 
         transformers.append(("numeric", Pipeline(num_steps), numeric_cols))
 
@@ -126,4 +123,8 @@ def build_feature_pipeline(
                 text_col,
             ))
 
-    return ColumnTransformer(transformers=transformers, remainder="drop")
+    return ColumnTransformer(
+        transformers=transformers,
+        remainder="drop",
+        verbose_feature_names_out=False,  # Preserve readable column names
+    )
