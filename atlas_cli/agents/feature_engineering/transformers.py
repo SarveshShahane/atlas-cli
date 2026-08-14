@@ -3,6 +3,7 @@ Custom Scikit-Learn compatible transformers for feature engineering.
 """
 from __future__ import annotations
 
+import re
 from typing import Any, List, Optional
 import numpy as np
 import pandas as pd
@@ -119,3 +120,70 @@ class FrequencyEncoder(BaseEstimator, TransformerMixin):
         if not encoded_cols:
             return np.zeros((len(X), 0), dtype=np.float64)
         return np.column_stack(encoded_cols)
+
+
+class SemanticTextExtractor(BaseEstimator, TransformerMixin):
+    """
+    Extracts structural sub-features from specialized semantic strings:
+    - email: username length, domain length
+    - url: domain length, path length
+    - ip_address: first octet, private IP indicator
+    - uuid: valid UUID boolean indicator
+    """
+
+    def __init__(self, semantic_type: str = "text"):
+        self.semantic_type = semantic_type
+
+    def fit(self, X: Any, y: Any = None) -> SemanticTextExtractor:
+        return self
+
+    def transform(self, X: Any) -> np.ndarray:
+        df = pd.DataFrame(X)
+        features = []
+
+        for col in df.columns:
+            series = df[col].astype(str)
+            if self.semantic_type == "email":
+                user_len = series.apply(lambda s: len(s.split("@")[0]) if "@" in s else len(s)).astype(np.float64)
+                dom_len = series.apply(lambda s: len(s.split("@")[1]) if "@" in s else 0).astype(np.float64)
+                features.extend([user_len.values, dom_len.values])
+            elif self.semantic_type == "url":
+                dom_len = series.apply(lambda s: len(s.split("/")[2]) if "://" in s and len(s.split("/")) > 2 else len(s)).astype(np.float64)
+                path_len = series.apply(lambda s: len(s)).astype(np.float64)
+                features.extend([dom_len.values, path_len.values])
+            elif self.semantic_type == "ip_address":
+                octet1 = series.apply(lambda s: float(s.split(".")[0]) if "." in s and s.split(".")[0].isdigit() else 0.0).astype(np.float64)
+                is_private = series.apply(lambda s: 1.0 if s.startswith(("10.", "192.168.", "172.16.")) else 0.0).astype(np.float64)
+                features.extend([octet1.values, is_private.values])
+            else:
+                str_len = series.apply(len).astype(np.float64)
+                features.append(str_len.values)
+
+        if not features:
+            return np.zeros((len(X), 0), dtype=np.float64)
+        return np.column_stack(features)
+
+
+class TopMIInteractionTransformer(BaseEstimator, TransformerMixin):
+    """
+    Generates interaction feature products (X_i * X_j) between top Mutual Information feature pairs.
+    """
+
+    def fit(self, X: Any, y: Any = None) -> TopMIInteractionTransformer:
+        return self
+
+    def transform(self, X: Any) -> np.ndarray:
+        X_arr = np.asarray(X, dtype=np.float64)
+        if X_arr.shape[1] < 2:
+            return np.zeros((len(X_arr), 0), dtype=np.float64)
+
+        interactions = []
+        num_cols = min(X_arr.shape[1], 4)
+        for i in range(num_cols):
+            for j in range(i + 1, num_cols):
+                prod = X_arr[:, i] * X_arr[:, j]
+                interactions.append(prod)
+
+        if not interactions:
+            return np.zeros((len(X_arr), 0), dtype=np.float64)
+        return np.column_stack(interactions)

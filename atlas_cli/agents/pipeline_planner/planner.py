@@ -11,6 +11,7 @@ from typing import Optional
 
 from pydantic import ValidationError
 
+from atlas_cli.agents.dataset_intelligence.schema import is_id_column
 from atlas_cli.agents.pipeline_planner import llm_client
 from atlas_cli.agents.pipeline_planner.prompts import build_system_prompt, build_user_prompt
 from atlas_cli.agents.pipeline_planner.schemas import ExecutionPlan
@@ -111,6 +112,15 @@ def run_planner(
             f"Validation errors:\n{exc}\n"
             f"Parsed dict:\n{json.dumps(plan_dict, indent=2)[:800]}"
         ) from exc
+
+    # Ensure all non-predictive ID columns in schema are included in drop_columns
+    drop_set = set(plan.preprocessing.drop_columns or [])
+    cols_data = dataset_summary.get("schema", {}).get("columns", [])
+    for c in cols_data:
+        col_name = c.get("name") if isinstance(c, dict) else str(c)
+        if col_name and col_name != plan.target_column and is_id_column(col_name, plan.target_column):
+            drop_set.add(col_name)
+    plan.preprocessing.drop_columns = list(drop_set)
 
     run_dir.mkdir(parents=True, exist_ok=True)
     plan_path = run_dir / "execution_plan.json"

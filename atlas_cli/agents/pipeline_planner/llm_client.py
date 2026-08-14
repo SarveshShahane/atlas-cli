@@ -37,8 +37,8 @@ from atlas_cli.core.config import settings
 from atlas_cli.core.logger import logger
 
 FALLBACK_CHAIN = [
-    "groq/llama3-8b-8192",
-    "llama3-8b-8192",
+    "groq/llama-3.1-8b-instant",
+    "groq/llama-3.3-70b-versatile",
 ]
 
 MAX_RETRIES = 2

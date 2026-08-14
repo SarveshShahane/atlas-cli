@@ -9,7 +9,18 @@ load_dotenv(dotenv_path=Path.cwd() / ".env", override=False)
 class Settings(BaseModel):
     app_name: str = "Atlas CLI"
     version: str = "0.1.0"
-    workspace_dir: Path = Path(".atlas_cli")
+    @property
+    def workspace_dir(self) -> Path:
+        env_dir = os.getenv("ATLAS_WORKSPACE_DIR")
+        if env_dir:
+            return Path(env_dir)
+        local_dir = Path(".atlas_cli")
+        if local_dir.exists() and (local_dir / "runs").exists():
+            return local_dir
+        project_root = Path(__file__).resolve().parent.parent.parent / ".atlas_cli"
+        if project_root.exists():
+            return project_root
+        return local_dir
 
     db_name: str = os.getenv("DB_NAME", "atlas_db")
     db_host: str = os.getenv("DB_HOST", "postgres")

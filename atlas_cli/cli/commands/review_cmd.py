@@ -46,6 +46,10 @@ def review(
         None, "--model", "-m",
         help="LLM model string override for reflection critique.",
     ),
+    max_iterations: int = typer.Option(
+        1, "--max-iterations", "-i",
+        help="Number of auto-critique refinement iterations (1 to 3).",
+    ),
 ) -> None:
     """Auto-diagnose model issues (overfitting, underfitting) & execute 1-pass critique-and-refine retry loop."""
 

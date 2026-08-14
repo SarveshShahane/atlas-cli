@@ -163,7 +163,7 @@ def review_and_refine(
             )
 
     # Compute initial test metrics
-    initial_em = compute_extended_metrics(run_id, target_entry, task_type=task_type)
+    initial_em = compute_extended_metrics(run_id, target_entry, task_type=task_type, primary_metric=primary_metric)
     initial_test_metrics = initial_em.test_metrics if initial_em else {}
 
     # 4. Diagnose model
@@ -318,6 +318,24 @@ def review_and_refine(
         refinement_successful=successful_refinement,
         opt_rationale=f"{refinement_plan.critique_summary} {verdict}",
     )
+
+    # Promote refined model if it improved test performance
+    if successful_refinement and ref_test > init_test and refined_result.estimator is not None:
+        try:
+            primary_model_path = models_dir / f"{safe_name}.joblib"
+            joblib.dump(refined_result.estimator, primary_model_path)
+            logger.info(f"Promoted refined model as winner: {primary_model_path}")
+
+            # Sync comparison_results.json winner test metrics
+            comparison_path = run_dir / "comparison_results.json"
+            if comparison_path.exists():
+                comp_data = json.loads(comparison_path.read_text(encoding="utf-8"))
+                if comp_data.get("winner") and comp_data["winner"].get("model_name") == model_name:
+                    comp_data["winner"]["primary_metric_test"] = ref_test
+                    comp_data["winner"]["val_metrics"] = refined_val_metrics
+                    comparison_path.write_text(json.dumps(comp_data, indent=2), encoding="utf-8")
+        except Exception as exc:
+            logger.warning(f"Could not promote refined model artifact: {exc}")
 
     # 10. Save critique_report.json
     critique_path = run_dir / "critique_report.json"

@@ -18,6 +18,8 @@ class FeatureImportance:
     rank: int
     feature_name: str
     mean_abs_shap: float
+    direction: str = "+"
+    signed_mean_shap: float = 0.0
 
 
 @dataclass
@@ -47,6 +49,10 @@ class ExplainabilityResult:
 
     # Local explanations
     local_explanations: list[LocalExplanation] = field(default_factory=list)
+    target_row_explanation: Optional[LocalExplanation] = None
+
+    # Interactions
+    top_interaction_pairs: list[dict[str, Any]] = field(default_factory=list)
 
     # Plot paths
     summary_plot_path: Optional[str] = None

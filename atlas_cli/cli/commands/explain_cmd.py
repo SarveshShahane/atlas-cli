@@ -51,6 +51,10 @@ def explain(
         None, "--model", "-m",
         help="LLM model string override for narrative generation.",
     ),
+    row: Optional[int] = typer.Option(
+        None, "--row",
+        help="Target row index in test split for individual prediction explanation.",
+    ),
 ) -> None:
     """Run SHAP analysis and generate feature importance explanations."""
 
@@ -76,6 +80,7 @@ def explain(
             result = compute_shap_explanations(
                 effective_run_id,
                 experiment_id=experiment_id,
+                target_row=row,
             )
     except FileNotFoundError as exc:
         console.print(f"[bold red]Error:[/bold red] {exc}")

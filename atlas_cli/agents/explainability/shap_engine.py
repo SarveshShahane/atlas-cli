@@ -155,6 +155,7 @@ def compute_shap_explanations(
     run_id: str,
     *,
     experiment_id: Optional[str] = None,
+    target_row: Optional[int] = None,
 ) -> ExplainabilityResult:
     """
     Compute SHAP explanations for the specified or winning model.
@@ -162,11 +163,17 @@ def compute_shap_explanations(
     Args:
         run_id: Run identifier.
         experiment_id: Optional specific model to explain.
+        target_row: Optional test row index for targeted instance explanation.
 
     Returns:
         ExplainabilityResult with global and local SHAP explanations.
     """
-    import shap
+    try:
+        import shap
+        has_shap = True
+    except ImportError:
+        logger.warning("shap package not installed; falling back to Scikit-Learn feature importances.")
+        has_shap = False
 
     run_dir = settings.workspace_dir / "runs" / run_id
 
@@ -216,6 +223,31 @@ def compute_shap_explanations(
         num_samples_explained=len(X_test),
     )
 
+    if not has_shap:
+        result.explainer_type = "TreeImportance (Fallback)"
+        fi_vals = np.zeros(num_features)
+        if hasattr(estimator, "feature_importances_"):
+            fi_vals = np.asarray(estimator.feature_importances_, dtype=np.float64)
+        elif hasattr(estimator, "coef_"):
+            coef = np.asarray(estimator.coef_, dtype=np.float64)
+            fi_vals = np.abs(coef).mean(axis=0) if coef.ndim > 1 else np.abs(coef)
+
+        global_importances = []
+        for name, imp in zip(feature_names, fi_vals):
+            global_importances.append(FeatureImportance(
+                feature_name=name,
+                mean_abs_shap=float(imp),
+                direction="+",
+                signed_mean_shap=float(imp),
+                rank=0,
+            ))
+        global_importances.sort(key=lambda x: x.mean_abs_shap, reverse=True)
+        for rank, fi in enumerate(global_importances, 1):
+            fi.rank = rank
+
+        result.global_importances = global_importances
+        return result
+
     # Select SHAP explainer
     if _is_tree_model(estimator):
         logger.info("Using TreeExplainer for tree-based model.")
@@ -251,7 +283,11 @@ def compute_shap_explanations(
         X_test = X_explain
         y_test = y_test[explain_idx] if len(explain_idx) <= len(y_test) else y_test[:explain_size]
 
-    # Handle multi-output SHAP values (classification returns list per class)
+    # Extract underlying array if Explanation object
+    if hasattr(shap_values, "values"):
+        shap_values = shap_values.values
+
+    # Handle multi-output SHAP values (list or 3D numpy array)
     if isinstance(shap_values, list):
         # For binary classification, use SHAP values for the positive class (index 1)
         if len(shap_values) == 2:
@@ -259,19 +295,30 @@ def compute_shap_explanations(
         else:
             # Multiclass: average absolute across classes
             shap_matrix = np.mean([np.abs(sv) for sv in shap_values], axis=0)
+    elif isinstance(shap_values, np.ndarray) and shap_values.ndim == 3:
+        # 3D array: (n_samples, n_features, n_classes)
+        if shap_values.shape[2] == 2:
+            shap_matrix = shap_values[:, :, 1]
+        else:
+            shap_matrix = np.mean(np.abs(shap_values), axis=2)
     else:
         shap_matrix = shap_values
 
     # Global feature importances (mean absolute SHAP)
     mean_abs_shap = np.mean(np.abs(shap_matrix), axis=0)
+    signed_mean_shap = np.mean(shap_matrix, axis=0)
     sorted_indices = np.argsort(mean_abs_shap)[::-1]
 
     for rank, idx in enumerate(sorted_indices, 1):
+        signed_val = float(signed_mean_shap[idx])
+        direction = "+" if signed_val >= 0 else "-"
         result.global_importances.append(
             FeatureImportance(
                 rank=rank,
                 feature_name=feature_names[idx] if idx < len(feature_names) else f"Feature_{idx}",
                 mean_abs_shap=float(mean_abs_shap[idx]),
+                direction=direction,
+                signed_mean_shap=signed_val,
             )
         )
 
@@ -315,6 +362,27 @@ def compute_shap_explanations(
                 confidence=conf,
                 top_contributions=contributions,
             )
+        )
+
+    # Process specific requested target row if provided
+    if target_row is not None and 0 <= target_row < len(X_test):
+        idx = target_row
+        pred = estimator.predict(X_test[idx:idx + 1])[0]
+        conf = float(confidences[idx]) if idx < len(confidences) else 1.0
+        instance_shap = shap_matrix[idx]
+        top_feat_idx = np.argsort(np.abs(instance_shap))[-5:][::-1]
+        contributions = []
+        for fi in top_feat_idx:
+            contributions.append({
+                "feature": feature_names[fi] if fi < len(feature_names) else f"Feature_{fi}",
+                "shap_value": float(instance_shap[fi]),
+                "feature_value": float(X_test[idx, fi]),
+            })
+        result.target_row_explanation = LocalExplanation(
+            instance_index=int(idx),
+            predicted_class=str(pred),
+            confidence=conf,
+            top_contributions=contributions,
         )
 
     # Store raw SHAP values and X_test for plot generation (transient, not serialized)

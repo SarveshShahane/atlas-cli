@@ -42,6 +42,33 @@ docker compose logs -f
 
 Entrypoints: 'atlas', 'atlas-cli', or 'python -m atlas_cli.cli.main'
 
+--- 3.0 FULL PIPELINE EXECUTION (RUN) ---
+Command:
+  atlas run <file_path> --goal <goal> [OPTIONS]
+
+Description:
+  Execute the entire Autonomous Data Science Operating System pipeline end-to-end:
+  analyze -> clean -> plan -> experiment -> report -> export in one command.
+  Creates an isolated project workspace folder inside .atlas_cli/runs/<run_id>/.
+
+Arguments:
+  <file_path>                  Path to dataset file (Required)
+
+Options:
+  --goal, -g TEXT              Natural-language prediction/analysis goal (Required)
+  --target, -t TEXT            Target column name override
+  --ignore, -i TEXT            Comma-separated column names to ignore/exclude
+  --output-dir, -o PATH        Target directory for exported dataset files
+  --format, -f TEXT            Output format for datasets: 'csv' or 'parquet' (Default: csv)
+  --run-id, -r TEXT            Run ID for workspace isolation (auto-generated if omitted)
+  --test-size, -ts FLOAT       Custom test split ratio override (e.g. 0.2 for 20% test split)
+
+Usage Examples:
+  atlas run Iris.csv --goal "Predict class species" -i Id
+  atlas run heart.csv --goal "predict target" --target target --format parquet
+  atlas run data.csv -g "forecast sales" --run-id my_project_run
+
+
 --- 3.1 INITIALIZATION ---
 Command:
   atlas init
@@ -225,6 +252,25 @@ Arguments:
 Usage Examples:
   atlas ask "What was the best performing model for run 0c80fc43?"
   atlas ask "Are there missing values or data leakage risks in Iris.csv?"
+
+
+--- 3.12 DATASET EXPORT ENGINE (EXPORT) ---
+Command:
+  atlas export [OPTIONS]
+
+Description:
+  Export cleaned, feature engineered, and train/test splitted datasets into CSV or Parquet format.
+
+Options:
+  --run-id, -r TEXT            Run ID to export datasets from (Defaults to most recent run)
+  --type, -t TEXT              Dataset type: 'cleaned', 'fe', 'splits', or 'all' (Default: all)
+  --output-dir, -o PATH        Target directory for exported dataset files (Default: ./exports)
+  --format, -f TEXT            Output file format: 'csv' or 'parquet' (Default: csv)
+
+Usage Examples:
+  atlas export
+  atlas export --run-id 0c80fc43 --type fe --format parquet
+  atlas export --type splits -o ./my_splits
 
 
 -------------------------------------------------------------------------------

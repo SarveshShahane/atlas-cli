@@ -91,13 +91,22 @@ def collect_report_data(run_id: str) -> dict[str, Any]:
     # ── Quality Report ───────────────────────────────────────────────────
     quality = _load_json(run_dir / "quality_report.json")
     if quality:
+        sanitized_cols = []
+        for col in quality.get("columns", []):
+            c = dict(col)
+            c["missing_pct"] = c.get("missing_pct") or 0.0
+            c["skewness"] = c.get("skewness") if c.get("skewness") is not None else 0.0
+            c["mean"] = c.get("mean") if c.get("mean") is not None else 0.0
+            c["std"] = c.get("std") if c.get("std") is not None else 0.0
+            sanitized_cols.append(c)
+
         ctx["has_quality"] = True
         ctx["quality"] = {
             "num_rows": quality.get("num_rows", 0),
             "num_cols": quality.get("num_cols", 0),
             "duplicate_rows": quality.get("duplicate_rows", 0),
             "duplicate_pct": quality.get("duplicate_pct", 0),
-            "columns": quality.get("columns", []),
+            "columns": sanitized_cols,
             "high_correlations": quality.get("high_correlations", []),
             "target_imbalance": quality.get("target_imbalance"),
         }

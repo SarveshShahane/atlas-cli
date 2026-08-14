@@ -17,6 +17,9 @@ Rules:
 - The JSON must exactly match the schema described by the user.
 - Choose model candidates suited to the dataset size, feature types, and task type.
 - Base all decisions on the dataset metadata and risks provided — do not make assumptions.
+- If high multicollinearity features (VIF >= 10.0) or high correlation pairs are present, include redundant columns in `preprocessing.drop_columns`.
+- If target imbalance is detected, set `evaluation.handle_imbalance: true` and select `evaluation.cv_strategy: "stratified_kfold"`.
+- If datetime or time-series features are present, consider setting `evaluation.cv_strategy: "timeseries_split"`.
 - For model_candidates, include 3–5 models ranked by expected suitability (priority 1 = best fit).
 - For tabular data, strongly consider modern gradient boosted tree models (XGBoost, CatBoost, LightGBM) alongside classical baselines (Random Forest, Logistic Regression, SVC).
 - Supported `library` strings:
@@ -64,6 +67,13 @@ def build_user_prompt(
         for c in schema_cols
     ]
 
+    # Extract VIF multicollinearity metrics >= 10.0
+    vif_list = quality_report.get("vif_metrics", [])
+    high_vif = [v for v in vif_list if v.get("vif", 0) >= 10.0]
+
+    # Extract Mutual Information top features
+    mi_list = quality_report.get("mutual_information", [])[:5]
+
     profile_summary = {
         "num_rows": quality_report.get("num_rows"),
         "num_cols": quality_report.get("num_cols"),
@@ -71,6 +81,9 @@ def build_user_prompt(
         "duplicate_pct": quality_report.get("duplicate_pct"),
         "target_imbalance": quality_report.get("target_imbalance"),
         "high_correlations": quality_report.get("high_correlations", [])[:5],
+        "high_vif_features": high_vif,
+        "top_mutual_information": mi_list,
+        "multivariate_anomalies": quality_report.get("multivariate_anomalies"),
     }
 
     schema_description = """{

@@ -2,7 +2,7 @@
 Parallel Experimentation Runner — Phase 5 Orchestrator.
 
 Ties together feature engineering, data splitting, parallel model training,
-metric logging, and artifact persistence.
+ensemble synthesis, metric logging, and artifact persistence.
 """
 from __future__ import annotations
 
@@ -15,8 +15,10 @@ from typing import Optional
 
 import joblib
 import numpy as np
+import pandas as pd
 from sqlmodel import Session
 
+from atlas_cli.agents.experimentation.ensemble import build_and_evaluate_ensemble
 from atlas_cli.agents.experimentation.splitter import split_data
 from atlas_cli.agents.experimentation.worker import (
     ExperimentResult,
@@ -35,6 +37,8 @@ logger = logging.getLogger("atlas_cli")
 def _load_execution_plan(run_dir: Path) -> ExecutionPlan:
     """Load and validate the execution plan JSON."""
     plan_path = run_dir / "execution_plan.json"
+    if not plan_path.exists():
+        plan_path = run_dir / "plan" / "execution_plan.json"
     if not plan_path.exists():
         raise FileNotFoundError(
             f"No execution_plan.json found in {run_dir}. Run 'atlas plan' first."
@@ -62,7 +66,7 @@ def _persist_experiment(
         error_message=result.error_message,
     )
     session.add(experiment)
-    session.flush()  
+    session.flush()
 
     for metric_name, metric_value in result.metrics.items():
         log = MetricLog(
@@ -88,11 +92,12 @@ def run_experiments(
     Execute the full experimentation pipeline for a run:
 
       1. Load execution plan.
-      2. Run Phase 4 feature engineering (if not already cached).
+      2. Run Phase 4 feature engineering.
       3. Split data into train / val / test.
       4. Train all model candidates in parallel via ThreadPoolExecutor.
-      5. Persist experiments, metrics, and model artifacts.
-      6. Save experiment_results.json summary.
+      5. Synthesize top models into a Weighted Ensemble.
+      6. Persist experiments, metrics, feature importances, and model artifacts.
+      7. Save experiment_results.json summary.
 
     Args:
         run_id: Run identifier (maps to .atlas_cli/runs/<run_id>/).
@@ -110,10 +115,10 @@ def run_experiments(
     plan = _load_execution_plan(run_dir)
     logger.info(f"Loaded execution plan: {plan.task_type}, {len(plan.model_candidates)} candidates")
 
-    logger.info("Running feature engineering pipeline...")
-    X, y, pipeline, feature_names = process_feature_engineering(run_id, file_path)
-
-    X_train, X_val, X_test, y_train, y_val, y_test = split_data(X, y, plan, random_seed=random_seed)
+    logger.info("Running leakage-free feature engineering & dataset splitting pipeline...")
+    X_train, X_val, X_test, y_train, y_val, y_test, pipeline, feature_names, X_train_raw, unfitted_pipeline = process_feature_engineering(
+        run_id, file_path=file_path, random_seed=random_seed
+    )
 
     test_dir = run_dir / "splits"
     test_dir.mkdir(parents=True, exist_ok=True)
@@ -123,6 +128,19 @@ def run_experiments(
     np.save(test_dir / "y_train.npy", y_train)
     np.save(test_dir / "X_val.npy", X_val)
     np.save(test_dir / "y_val.npy", y_val)
+
+    # Save tabular CSV dataset outputs for train/val/test splits
+    target_name = plan.target_column or "target"
+    for split_name, X_split, y_split in [
+        ("train", X_train, y_train),
+        ("val", X_val, y_val),
+        ("test", X_test, y_test),
+    ]:
+        X_split_dense = X_split.toarray() if hasattr(X_split, "toarray") else X_split
+        split_df = pd.DataFrame(data=X_split_dense, columns=feature_names)
+        split_df[target_name] = y_split
+        split_df.to_csv(test_dir / f"{split_name}.csv", index=False)
+        split_df.to_csv(test_dir / f"{split_name}_dataset.csv", index=False)
 
     worker_args_list: list[WorkerArgs] = []
     for candidate in sorted(plan.model_candidates, key=lambda m: m.priority):
@@ -135,11 +153,14 @@ def run_experiments(
             y_train=y_train,
             X_val=X_val,
             y_val=y_val,
+            feature_names=feature_names,
+            X_train_raw=X_train_raw,
+            unfitted_pipeline=unfitted_pipeline,
         ))
 
     results: list[ExperimentResult] = []
     effective_workers = min(max_workers, len(worker_args_list))
-    # Pre-import packages in main thread to prevent thread import lock contention and circular imports
+
     for _mod in ("polars", "sklearn", "lightgbm", "xgboost", "catboost", "joblib"):
         try:
             __import__(_mod)
@@ -165,10 +186,15 @@ def run_experiments(
                 )
             results.append(result)
 
+    # Synthesize Ensemble from top performing models
+    ensemble_res = build_and_evaluate_ensemble(results, plan, X_train, y_train, X_val, y_val)
+    if ensemble_res:
+        results.append(ensemble_res)
+
     total_time = time.perf_counter() - t0
     logger.info(f"All experiments finished in {total_time:.2f}s")
 
-    create_db_and_tables() 
+    create_db_and_tables()
     models_dir = run_dir / "models"
     models_dir.mkdir(parents=True, exist_ok=True)
 
@@ -203,6 +229,7 @@ def run_experiments(
                 "duration_seconds": round(r.duration_seconds, 2),
                 "metrics": r.metrics,
                 "train_metrics": r.train_metrics,
+                "feature_importances": dict(list(r.feature_importances.items())[:5]),
                 "error": r.error_message[:200] if r.error_message else None,
             }
             for r in results

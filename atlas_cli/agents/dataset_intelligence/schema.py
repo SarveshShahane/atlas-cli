@@ -9,15 +9,49 @@ from typing import Literal
 
 import pandas as pd
 
+import re
+from typing import Literal
+
 ColumnType = Literal[
-    "numeric", "categorical", "datetime", "text", "boolean", "high_cardinality", "unknown"
+    "numeric",
+    "categorical",
+    "datetime",
+    "text",
+    "boolean",
+    "high_cardinality",
+    "email",
+    "ip_address",
+    "url",
+    "uuid",
+    "phone_number",
+    "spatial_coords",
+    "unknown",
 ]
 
 HIGH_CARDINALITY_RATIO = 0.80
-
 TEXT_WORD_THRESHOLD = 5
-
 DATE_NAME_HINTS = {"date", "time", "year", "month", "day", "dt", "timestamp", "ts"}
+
+# Regex patterns for specialized semantic types
+EMAIL_REGEX = re.compile(r"^[\w\.-]+@[\w\.-]+\.\w+$")
+IP_REGEX = re.compile(r"^(?:(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.){3}(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)$")
+URL_REGEX = re.compile(r"^https?://[^\s/$.?#].[^\s]*$", re.IGNORECASE)
+UUID_REGEX = re.compile(r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$")
+PHONE_REGEX = re.compile(r"^\+?[0-9]{1,4}?[-.\s]?\(?[0-9]{1,3}?\)?[-.\s]?[0-9]{1,4}[-.\s]?[0-9]{1,4}[-.\s]?[0-9]{1,9}$")
+
+ID_COLUMN_REGEX = re.compile(
+    r"^(id|uuid|index|row_?num|row_?id|unnamed:\s*0)$"
+    r"|.+(_|-|\s)id$"
+    r"|.+[a-z0-9](Id|ID)$",
+    re.IGNORECASE,
+)
+
+
+def is_id_column(col_name: str, target_col: str | None = None) -> bool:
+    """Check if a column is a non-predictive identifier column (e.g. Id, user_id, PassengerId)."""
+    if target_col and col_name == target_col:
+        return False
+    return bool(ID_COLUMN_REGEX.match(col_name.strip()))
 
 
 @dataclass
@@ -66,6 +100,22 @@ def _median_word_count(series: pd.Series) -> float:
     return float(sample.str.split().apply(len).median()) if len(sample) > 0 else 0.0
 
 
+def _check_regex_type(sample: list[str]) -> ColumnType | None:
+    if not sample:
+        return None
+    if all(EMAIL_REGEX.match(s) for s in sample):
+        return "email"
+    if all(IP_REGEX.match(s) for s in sample):
+        return "ip_address"
+    if all(URL_REGEX.match(s) for s in sample):
+        return "url"
+    if all(UUID_REGEX.match(s) for s in sample):
+        return "uuid"
+    if len(sample) >= 3 and all(PHONE_REGEX.match(s) for s in sample):
+        return "phone_number"
+    return None
+
+
 def _infer_column_type(series: pd.Series, col_name: str) -> ColumnType:
     n = len(series)
     if n == 0:
@@ -90,10 +140,25 @@ def _infer_column_type(series: pd.Series, col_name: str) -> ColumnType:
     if n_unique <= 2 and pd.api.types.is_integer_dtype(dtype):
         return "boolean"
 
+    # Check spatial coordinate hint
+    col_lower = col_name.lower()
     if pd.api.types.is_numeric_dtype(dtype):
+        if col_lower in ("lat", "latitude", "y") or col_lower in ("lon", "lng", "longitude", "x"):
+            clean = series.dropna()
+            if len(clean) > 0:
+                min_v, max_v = clean.min(), clean.max()
+                if (col_lower in ("lat", "latitude") and -90 <= min_v and max_v <= 90) or \
+                   (col_lower in ("lon", "lng", "longitude") and -180 <= min_v and max_v <= 180):
+                    return "spatial_coords"
+
         return "numeric"
 
     if pd.api.types.is_object_dtype(dtype):
+        clean_str_sample = series.dropna().astype(str).head(30).tolist()
+        regex_type = _check_regex_type(clean_str_sample)
+        if regex_type:
+            return regex_type
+
         unique_ratio = n_unique / max(n, 1)
 
         if unique_ratio >= HIGH_CARDINALITY_RATIO:

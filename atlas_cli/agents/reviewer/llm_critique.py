@@ -130,17 +130,21 @@ def generate_critique(
     llm_model = model_override or settings.llm_model
 
     try:
-        from litellm import completion
+        from atlas_cli.agents.pipeline_planner.llm_client import call as llm_call
 
         logger.info(f"Calling LLM ({llm_model}) for AI Reviewer reflection...")
-        response = completion(
-            model=llm_model,
+        content = llm_call(
             messages=[{"role": "user", "content": prompt}],
+            model=llm_model,
             temperature=0.2,
-            response_format={"type": "json_object"},
+            max_tokens=1000,
         )
-        content = response.choices[0].message.content.strip()
-        data = json.loads(content)
+        import re
+        match = re.search(r"\{.*\}", content, re.DOTALL)
+        if match:
+            data = json.loads(match.group(0))
+        else:
+            data = json.loads(content)
         return RefinementPlan.model_validate(data)
 
     except Exception as exc:

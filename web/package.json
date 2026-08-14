@@ -1,0 +1,21 @@
+{
+  "name": "atlas-gui",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "concurrently -k -n service,gui -c cyan,green \"npm:service\" \"npm:gui\"",
+    "gui": "vite",
+    "service": "..\\.venv\\Scripts\\python.exe -m uvicorn main:app --app-dir ../service --host 127.0.0.1 --port 8000",
+    "build": "vite build",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "@vitejs/plugin-react": "latest",
+    "vite": "latest",
+    "react": "latest",
+    "react-dom": "latest",
+    "concurrently": "^9.2.1"
+  },
+  "devDependencies": {}
+}

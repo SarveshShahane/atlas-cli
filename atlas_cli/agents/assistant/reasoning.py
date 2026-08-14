@@ -17,7 +17,7 @@ from atlas_cli.core.config import settings
 logger = logging.getLogger("atlas_cli")
 
 _ASSISTANT_PROMPT = """You are Atlas, an expert Autonomous Data Science Assistant.
-Answer the user's natural language question accurately and concisely using ONLY the provided workspace context.
+Answer the user's natural language question accurately and concisely using ONLY the provided workspace context for the specified dataset/run. Do NOT mention or infer details about other datasets.
 
 ## User Question
 {query}
@@ -26,23 +26,45 @@ Answer the user's natural language question accurately and concisely using ONLY 
 {context_json}
 
 ## Instructions
-- Provide a direct, clear, professional answer.
-- Highlight key model names, metrics, dataset names, or risks when applicable.
+- Provide a direct, clear, professional answer strictly relevant to the given dataset in context.
+- Highlight key model names, metrics, dataset names, column names, or risks when applicable.
 - Keep the response concise and well-structured (2-4 paragraphs maximum).
 """
 
 
-def answer_query(query: str) -> str:
+_CODE_GEN_PROMPT = """You are Atlas, an expert Autonomous Data Science Assistant.
+The user wants executable Python code to accomplish a task based on the workspace context.
+
+## User Question
+{query}
+
+## Workspace Context
+{context_json}
+
+## Instructions
+- Provide ready-to-run Python code inside ```python ... ``` code fences.
+- Include necessary imports (pandas, joblib, sklearn, etc.) and reference model paths like `.atlas_cli/runs/<run_id>/models/<winner>.joblib`.
+- Include concise markdown explanation above the code block.
+"""
+
+
+def answer_query(
+    query: str,
+    run_id: Optional[str] = None,
+    generate_code: bool = False,
+) -> str:
     """
     Answer a user query about workspace metadata, dataset risks, or experiments.
 
     Args:
         query: Natural language question.
+        run_id: Optional run ID to restrict context to a single project/run.
+        generate_code: Whether to instruct LLM to emit Python code snippet.
 
     Returns:
         String answer.
     """
-    context = build_workspace_context(query)
+    context = build_workspace_context(query, run_id=run_id)
     context_json = json.dumps(context, indent=2)
 
     # Check if an API key is configured before calling LLM
@@ -58,7 +80,8 @@ def answer_query(query: str) -> str:
             from atlas_cli.agents.pipeline_planner.llm_client import call as llm_call
 
             logger.info(f"Calling LLM ({settings.llm_model}) for natural language assistant...")
-            prompt = _ASSISTANT_PROMPT.format(
+            template = _CODE_GEN_PROMPT if generate_code else _ASSISTANT_PROMPT
+            prompt = template.format(
                 query=query,
                 context_json=context_json,
             )
@@ -66,7 +89,7 @@ def answer_query(query: str) -> str:
                 messages=[{"role": "user", "content": prompt}],
                 model=settings.llm_model,
                 temperature=0.2,
-                max_tokens=1000,
+                max_tokens=1200,
             )
             if response and response.strip():
                 return response.strip()
@@ -85,7 +108,26 @@ def _heuristic_qa_fallback(query: str, context: dict[str, Any]) -> str:
     if not runs:
         return "No runs or dataset analyses found in the workspace. Run 'atlas analyze <file>' or 'atlas plan <file> --goal <goal>' first."
 
-    # Best model query
+    # Best model or metrics query
+    if "metric" in q_lower or "algorithm" in q_lower or "eval" in q_lower or "score" in q_lower:
+        for r in runs:
+            plan = r.get("plan", {})
+            winner = r.get("winner")
+            rankings = r.get("rankings", [])
+            ds_name = r.get("dataset", {}).get("file_name", "dataset")
+            pm = plan.get("primary_metric", "Primary Metric")
+            if rankings:
+                lines = [f"📊 **Evaluation Metrics for {ds_name} (Run {r['run_id']}):**\n", f"• **Primary Metric:** `{pm}`\n"]
+                for rk in rankings:
+                    lines.append(f"• **{rk.get('model_name')}:** Test {pm} = {rk.get('primary_metric_test', 0.0):.4f} (Composite Score: {rk.get('composite_score', 0.0):.4f})")
+                return "\n".join(lines)
+            elif winner:
+                return (
+                    f"📊 **Evaluation Metrics for {ds_name} (Run {r['run_id']}):**\n\n"
+                    f"• **Primary Metric:** `{pm}`\n"
+                    f"• **Top Model ({winner.get('model_name')}):** Test {pm} = {winner.get('primary_metric_test', 0.0):.4f}"
+                )
+
     if "best" in q_lower or "winner" in q_lower or "top" in q_lower or "performing" in q_lower:
         for r in runs:
             winner = r.get("winner")

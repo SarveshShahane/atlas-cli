@@ -52,6 +52,11 @@ def generate_reports(
     env = _get_jinja_env()
     outputs: dict[str, Path] = {}
 
+    run_id = ctx.get("run_id")
+    sub_out = (settings.workspace_dir / "runs" / run_id / "reports") if run_id else None
+    if sub_out:
+        sub_out.mkdir(parents=True, exist_ok=True)
+
     # ── Render Markdown ──────────────────────────────────────────────────
     try:
         md_template = env.get_template("report.md.j2")
@@ -59,6 +64,8 @@ def generate_reports(
         md_path = out / "REPORT.md"
         md_path.write_text(md_content, encoding="utf-8")
         outputs["markdown"] = md_path
+        if sub_out:
+            (sub_out / "REPORT.md").write_text(md_content, encoding="utf-8")
         logger.info(f"Markdown report saved: {md_path}")
     except Exception as exc:
         logger.error(f"Failed to render Markdown report: {exc}")
@@ -70,6 +77,8 @@ def generate_reports(
         html_path = out / "REPORT.html"
         html_path.write_text(html_content, encoding="utf-8")
         outputs["html"] = html_path
+        if sub_out:
+            (sub_out / "REPORT.html").write_text(html_content, encoding="utf-8")
         logger.info(f"HTML report saved: {html_path}")
     except Exception as exc:
         logger.error(f"Failed to render HTML report: {exc}")

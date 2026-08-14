@@ -69,8 +69,9 @@ def _render_feature_importance_table(result: ExplainabilityResult) -> None:
 
     table.add_column("#", justify="center", width=4, style="dim")
     table.add_column("Feature", style="bold white", min_width=18)
+    table.add_column("Direction", justify="center", min_width=14)
     table.add_column("Mean |SHAP|", justify="right", min_width=12)
-    table.add_column("Impact", min_width=30)
+    table.add_column("Impact", min_width=25)
 
     # Get max SHAP for bar scaling
     max_shap = result.global_importances[0].mean_abs_shap if result.global_importances else 1.0
@@ -78,7 +79,7 @@ def _render_feature_importance_table(result: ExplainabilityResult) -> None:
     top_n = min(20, len(result.global_importances))
     for feat in result.global_importances[:top_n]:
         # Visual bar
-        bar_width = 25
+        bar_width = 20
         filled = int((feat.mean_abs_shap / max_shap) * bar_width) if max_shap > 0 else 0
         bar = "█" * filled + "░" * (bar_width - filled)
 
@@ -93,9 +94,13 @@ def _render_feature_importance_table(result: ExplainabilityResult) -> None:
             name_style = "white"
             bar_style = "dim"
 
+        dir_str = "(+) Driver" if feat.direction == "+" else "(-) Driver"
+        dir_style = "bold green" if feat.direction == "+" else "bold red"
+
         table.add_row(
             str(feat.rank),
             Text(feat.feature_name, style=name_style),
+            Text(dir_str, style=dir_style),
             f"{feat.mean_abs_shap:.6f}",
             Text(bar, style=bar_style),
         )
@@ -107,6 +112,9 @@ def _render_feature_importance_table(result: ExplainabilityResult) -> None:
 
 def _render_local_explanations(result: ExplainabilityResult) -> None:
     """Render local SHAP explanations for sample instances."""
+    if result.target_row_explanation:
+        _render_local_group([result.target_row_explanation], f"Target Row #{result.target_row_explanation.instance_index} Explanation", "bold magenta")
+
     if not result.local_explanations:
         return
 

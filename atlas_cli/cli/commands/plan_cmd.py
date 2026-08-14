@@ -3,6 +3,7 @@ atlas plan command — Pipeline Planner entry point.
 """
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from typing import Optional
 import uuid
@@ -30,6 +31,7 @@ def plan(
     file_path: Path = typer.Argument(..., help="Path to the dataset file (CSV, Parquet, JSON)"),
     goal: str = typer.Option(..., "--goal", "-g", help="Natural-language prediction/analysis goal"),
     target: Optional[str] = typer.Option(None, "--target", "-t", help="Target column name"),
+    ignore: Optional[str] = typer.Option(None, "--ignore", "-i", help="Comma-separated list of column names to ignore/exclude"),
     run_id: Optional[str] = typer.Option(None, "--run-id", "-r", help="Reuse an existing run ID (skips re-analysis)"),
     model: Optional[str] = typer.Option(None, "--model", "-m", help="LLM model string override"),
 ) -> None:
@@ -40,12 +42,13 @@ def plan(
     otherwise the Dataset Intelligence pipeline runs inline first.
 
     Examples:
-        atlas plan Iris.csv --goal "classify iris species" --target Species
+        atlas plan Iris.csv --goal "classify iris species" --target Species --ignore Id
         atlas plan sales.csv --goal "predict monthly revenue" --target revenue --model groq/llama-3.3-70b-versatile
     """
     effective_run_id = run_id or str(uuid.uuid4())[:8]
     run_dir = settings.workspace_dir / "runs" / effective_run_id
 
+    ignore_cols = [c.strip() for c in ignore.split(",") if c.strip()] if ignore else []
     needs_analyze = not (run_dir / "dataset_summary.json").exists()
 
     if needs_analyze:
@@ -57,7 +60,7 @@ def plan(
             f"[dim]No existing analysis found for run [bold]{effective_run_id}[/bold]. "
             "Running Dataset Intelligence pipeline first...[/dim]"
         )
-        _run_analyze_inline(file_path, target, run_dir, effective_run_id)
+        _run_analyze_inline(file_path, target, ignore_cols, run_dir, effective_run_id)
 
     try:
         provider = llm_client.validate_api_keys()
@@ -79,6 +82,14 @@ def plan(
                 model=model,
                 temperature=0.2,
             )
+            if ignore_cols:
+                drop_set = set(plan_obj.preprocessing.drop_columns or [])
+                drop_set.update(ignore_cols)
+                plan_obj.preprocessing.drop_columns = list(drop_set)
+                (run_dir / "execution_plan.json").write_text(
+                    json.dumps(plan_obj.to_dict(), indent=2, default=str),
+                    encoding="utf-8"
+                )
         except RuntimeError as exc:
             console.print(f"[bold red]Planner failed:[/bold red] {exc}")
             raise typer.Exit(code=1)
@@ -88,10 +99,12 @@ def plan(
     console.rule(f"[dim]Run ID: {effective_run_id}[/dim]")
 
 
-def _run_analyze_inline(file_path: Path, target: Optional[str], run_dir: Path, run_id: str) -> None:
+def _run_analyze_inline(file_path: Path, target: Optional[str], ignore_cols: list[str], run_dir: Path, run_id: str) -> None:
     """Run the Dataset Intelligence pipeline and export artifacts to run_dir."""
     with console.status(f"[cyan]Loading {file_path.name}...[/cyan]"):
         df, meta = load_dataset(file_path)
+        if ignore_cols:
+            df = df.drop(columns=[c for c in ignore_cols if c in df.columns], errors="ignore")
     with console.status("[cyan]Inferring schema...[/cyan]"):
         schema = infer_schema(df)
     with console.status("[cyan]Profiling dataset...[/cyan]"):
@@ -166,8 +179,17 @@ def _render_plan(plan: ExecutionPlan, run_dir: Path) -> None:
     ))
 
     plan_path = run_dir / "execution_plan.json"
+    plan_dir = run_dir / "plan"
+    plan_dir.mkdir(parents=True, exist_ok=True)
+    sub_plan_path = plan_dir / "execution_plan.json"
+
+    plan_json_data = json.dumps(plan.model_dump(), indent=2)
+    plan_path.write_text(plan_json_data, encoding="utf-8")
+    sub_plan_path.write_text(plan_json_data, encoding="utf-8")
+
     console.print(Panel(
-        f"[cyan]→[/cyan] [dim]{plan_path.resolve()}[/dim]",
+        f"[cyan]→[/cyan] [dim]{plan_path.resolve()}[/dim]\n"
+        f"[cyan]→[/cyan] [dim]{sub_plan_path.resolve()}[/dim]",
         title="[bold green]✅ Plan Saved[/bold green]",
         border_style="green",
     ))
