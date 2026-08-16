@@ -15,7 +15,7 @@ def print_banner() -> None:
     panel = Panel(
         Text(BANNER_TEXT, style="bold cyan") + Text("\n  Autonomous Data Science Operating System v0.1.0\n", style="italic white"),
         border_style="cyan",
-        subtitle="Cursor × Git × MLflow × Kaggle × AI Agent",
+        subtitle="-- Atlas --",
         subtitle_align="center"
     )
     console.print(panel)

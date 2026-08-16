@@ -1,13 +1,15 @@
 """
 Assistant Context Builder — Natural Language Assistant.
 
-Scans local workspace directory (.atlas_cli/runs/) and SQLite database to
-construct comprehensive context for LLM question-answering.
+Scans local workspace directory (.atlas_cli/runs/) to construct a concise,
+information-dense context dictionary for LLM question-answering.
+Optimized to keep token footprint low (~1000 tokens) while preserving critical
+dataset profiling, model rankings, SHAP feature importances, and AI reviewer critique.
 """
 from __future__ import annotations
 
 import json
-import logging, re
+import logging
 from pathlib import Path
 from typing import Any, Optional
 
@@ -51,16 +53,37 @@ def _get_run_artifact(d: Path, subpath: str, root_filename: str) -> Optional[dic
     return None
 
 
+def _normalize_feature_item(item: dict) -> dict[str, Any]:
+    """Normalize feature importance dictionary from various schema formats."""
+    name = (
+        item.get("feature_name")
+        or item.get("feature")
+        or item.get("name")
+        or item.get("col")
+        or "unknown"
+    )
+    val = (
+        item.get("mean_abs_shap")
+        if item.get("mean_abs_shap") is not None
+        else (item.get("importance") if item.get("importance") is not None else item.get("score", 0.0))
+    )
+    try:
+        val = float(val)
+    except (TypeError, ValueError):
+        val = 0.0
+    return {"feature": str(name), "importance": val}
+
+
 def build_workspace_context(query: str, run_id: Optional[str] = None) -> dict[str, Any]:
     """
-    Build comprehensive structured workspace context dictionary for the LLM.
+    Build a concise, high-signal structured workspace context for the LLM.
 
     Args:
         query: User natural language query.
         run_id: Optional run ID to restrict context to a single project/run.
 
     Returns:
-        Dict containing total workspace runs and complete details of selected runs.
+        Dict containing total workspace runs and focused details of the target run.
     """
     runs_dir = settings.workspace_dir / "runs"
     if not runs_dir.exists():
@@ -68,130 +91,141 @@ def build_workspace_context(query: str, run_id: Optional[str] = None) -> dict[st
 
     all_run_dirs = sorted(
         [d for d in runs_dir.iterdir() if d.is_dir()],
-        key=lambda d: d.stat().st_mtime,
+        key=lambda d: d.stat().st_mtime if d.exists() else 0,
         reverse=True,
     )
+    if not all_run_dirs:
+        return {"runs": [], "total_runs": 0}
 
     if run_id:
         target_run_ids = [run_id]
     else:
         target_run_ids = extract_run_ids_from_query(query)
 
-    # If specific run requested, prioritize it; else include latest 5 runs
     if target_run_ids:
         selected_dirs = [d for d in all_run_dirs if d.name in target_run_ids]
-        if not selected_dirs and all_run_dirs:
+        if not selected_dirs:
             selected_dirs = [all_run_dirs[0]]
     else:
-        selected_dirs = all_run_dirs[:5]
+        # Focus primarily on the latest active run to keep token count well within LLM limits
+        selected_dirs = [all_run_dirs[0]]
 
     runs_data = []
     for d in selected_dirs:
         rid = d.name
-        run_info: dict[str, Any] = {"run_id": rid, "run_dir_path": str(d.resolve())}
+        run_info: dict[str, Any] = {"run_id": rid}
 
-        # 1. Dataset Intelligence & Schema
+        # 1. Dataset Summary & Schema
         ds_summary = _get_run_artifact(d, "analysis/dataset_summary.json", "dataset_summary.json")
         if ds_summary:
+            schema_cols = ds_summary.get("schema", {}).get("columns", [])
+            col_list = [
+                {"name": c.get("name"), "type": c.get("inferred_type") or c.get("dtype")}
+                for c in schema_cols if isinstance(c, dict)
+            ]
             run_info["dataset"] = {
-                "file_name": ds_summary.get("file_name"),
-                "file_format": ds_summary.get("file_format"),
-                "file_size_mb": ds_summary.get("file_size_mb"),
+                "file_name": ds_summary.get("file_name") or ds_summary.get("dataset_name"),
                 "num_rows": ds_summary.get("num_rows"),
                 "num_cols": ds_summary.get("num_cols"),
-                "schema_columns": ds_summary.get("schema", {}).get("columns", []),
+                "target_column": ds_summary.get("target") or ds_summary.get("target_column"),
+                "columns": col_list,
             }
 
-        # 2. Quality & Risk Assessment
-        risks_data = _get_run_artifact(d, "analysis/risk_assessment.json", "risk_assessment.json")
-        if risks_data:
-            run_info["risks_summary"] = {
-                "overall_severity": risks_data.get("overall_severity"),
-                "risks": risks_data.get("risks", []),
+        # 2. Quality & Risk Assessment & Profiling
+        quality = _get_run_artifact(d, "analysis/quality_report.json", "quality_report.json") or {}
+        risks_data = _get_run_artifact(d, "analysis/risk_assessment.json", "risk_assessment.json") or {}
+        
+        risks_list = risks_data.get("risks", quality.get("risks", []))
+        compact_risks = [
+            {
+                "category": r.get("category"),
+                "severity": r.get("severity"),
+                "column": r.get("column"),
+                "description": r.get("description"),
             }
+            for r in risks_list if isinstance(r, dict)
+        ]
+        
+        raw_mi = quality.get("mutual_information", [])
+        norm_mi = [_normalize_feature_item(m) for m in raw_mi if isinstance(m, dict)]
+        norm_mi.sort(key=lambda x: x["importance"], reverse=True)
 
-        # 3. Cleaning Report
-        clean_data = _get_run_artifact(d, "cleaned/clean_report.json", "clean_report.json")
-        cleaned_csv = d / "cleaned" / "cleaned_data.csv"
-        if not cleaned_csv.exists():
-            cleaned_csv = d / "cleaned_data.csv"
+        run_info["data_quality"] = {
+            "overall_severity": risks_data.get("overall_severity") or quality.get("overall_severity", "LOW"),
+            "duplicate_rows": quality.get("duplicate_rows", 0),
+            "risks": compact_risks,
+            "mutual_information": norm_mi,
+            "vif_metrics": quality.get("vif_metrics", []),
+            "high_correlations": quality.get("high_correlations", []),
+        }
 
-        if clean_data or cleaned_csv.exists():
-            run_info["cleaning"] = {
-                "cleaned_csv_exists": cleaned_csv.exists(),
-                "cleaned_csv_path": str(cleaned_csv.resolve()) if cleaned_csv.exists() else None,
-                "clean_report": clean_data,
-            }
-
-        # 4. Execution Plan
+        # 3. Execution Plan
         plan = _get_run_artifact(d, "plan/execution_plan.json", "execution_plan.json")
         if plan:
+            candidates = [
+                {"name": m.get("name"), "library": m.get("library"), "priority": m.get("priority")}
+                for m in plan.get("model_candidates", []) if isinstance(m, dict)
+            ]
             run_info["plan"] = {
-                "goal_reasoning": plan.get("reasoning"),
                 "task_type": plan.get("task_type"),
                 "target_column": plan.get("target_column"),
-                "preprocessing": plan.get("preprocessing", {}),
-                "feature_engineering": plan.get("feature_engineering", {}),
-                "model_candidates": plan.get("model_candidates", []),
-                "evaluation": plan.get("evaluation", {}),
+                "reasoning": plan.get("reasoning"),
+                "model_candidates": candidates,
             }
 
-        # 5. Feature Engineering Metadata
-        feats_meta = _get_run_artifact(d, "features/features_meta.json", "features_meta.json")
-        if feats_meta:
-            run_info["feature_engineering_meta"] = feats_meta
-
-        # 6. Experiments & Model Candidate Results
-        exp_results = _get_run_artifact(d, "models/experiment_results.json", "experiment_results.json")
-        if exp_results:
-            results_list = exp_results.get("results", exp_results if isinstance(exp_results, list) else [])
-            run_info["experiment_models"] = [
-                {
-                    "model_name": r.get("model_name"),
-                    "library": r.get("library"),
-                    "status": r.get("status"),
-                    "metrics": r.get("metrics", {}),
-                    "train_metrics": r.get("train_metrics", {}),
-                    "feature_importances": r.get("feature_importances", {}),
-                    "duration_seconds": r.get("duration_seconds"),
-                    "hyperparams": r.get("hyperparams", {}),
-                    "artifact_path": str((d / "models" / f"{r.get('model_name', '').lower().replace(' ', '_')}.joblib").resolve()),
-                }
-                for r in results_list if isinstance(r, dict)
-            ]
-
-        # 7. Comparison & Winner
-        comp = _load_json(d / "comparison_results.json")
+        # 4. Comparison & Model Rankings
+        comp = _load_json(d / "comparison_results.json") or _load_json(d / "models" / "comparison_results.json")
+        exp_results = _get_run_artifact(d, "models/experiment_results.json", "experiment_results.json") or {}
+        
         if comp:
-            run_info["winner"] = comp.get("winner")
-            run_info["rankings"] = comp.get("rankings", [])
+            winner = comp.get("winner") or exp_results.get("winner") or {}
+            winner_name = winner.get("model_name") if isinstance(winner, dict) else str(winner)
+            rankings = [
+                {
+                    "rank": rk.get("rank"),
+                    "model_name": rk.get("model_name"),
+                    "test_metric": rk.get("primary_metric_test") or rk.get("test_score"),
+                    "composite_score": rk.get("composite_score"),
+                }
+                for rk in comp.get("rankings", []) if isinstance(rk, dict)
+            ]
+            run_info["model_results"] = {
+                "winner_model": winner_name,
+                "primary_metric": comp.get("primary_metric") or exp_results.get("primary_metric"),
+                "winner_score": winner.get("mean_cv_score") if isinstance(winner, dict) else None,
+                "rankings": rankings,
+                "feature_consensus": comp.get("feature_consensus", []),
+            }
 
-        # 8. AI Reviewer Critique
-        reviewer = _load_json(d / "reviewer_report.json")
-        if reviewer:
-            run_info["reviewer_critique"] = reviewer
-
-        # 9. Explainability & SHAP
+        # 5. Explainability & SHAP Feature Importances
         explain = _load_json(d / "explainability_results.json")
         if explain:
-            run_info["shap_global_importances"] = explain.get("global_importances", [])
-            run_info["why_winner_chosen"] = explain.get("narrative", {}).get("why_chosen")
+            raw_importances = explain.get("global_importances", [])
+            norm_importances = [_normalize_feature_item(f) for f in raw_importances if isinstance(f, dict)]
+            norm_importances.sort(key=lambda x: x["importance"], reverse=True)
 
-        # 10. Executive Reports & Exports
-        report_md = d / "reports" / "REPORT.md"
-        if not report_md.exists():
-            report_md = d / "REPORT.md"
-        if report_md.exists():
-            run_info["executive_report_path"] = str(report_md.resolve())
+            run_info["explainability"] = {
+                "model_name": explain.get("model_name"),
+                "global_feature_importances": norm_importances,
+                "feature_impact_narrative": explain.get("feature_impact_narrative") or explain.get("narrative", {}).get("impact") or explain.get("narrative", {}).get("feature_impact"),
+                "why_chosen_narrative": explain.get("why_chosen_narrative") or explain.get("narrative", {}).get("why_chosen"),
+            }
 
-        exports_dir = d / "exports"
-        if exports_dir.exists():
-            run_info["exports_available"] = [f.name for f in exports_dir.iterdir() if f.is_file()]
+        # 6. AI Reviewer Critique
+        reviewer = _load_json(d / "critique_report.json") or _load_json(d / "reviewer_report.json")
+        if reviewer:
+            run_info["ai_reviewer"] = {
+                "diagnosis": reviewer.get("diagnosis") or reviewer.get("critique_summary"),
+                "actions_applied": reviewer.get("actions", []),
+                "refined_model": reviewer.get("refined_model_name") or reviewer.get("refined_model"),
+                "before_metrics": reviewer.get("before_metrics", {}),
+                "after_metrics": reviewer.get("after_metrics", {}),
+            }
 
         runs_data.append(run_info)
 
     return {
         "query": query,
-        "total_runs": len(all_run_dirs),
+        "total_workspace_runs": len(all_run_dirs),
         "selected_runs": runs_data,
     }

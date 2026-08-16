@@ -36,3 +36,8 @@ dependencies = [
 [project.scripts]
 atlas = "atlas_cli.cli.main:app"
 atlas-cli = "atlas_cli.cli.main:app"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+

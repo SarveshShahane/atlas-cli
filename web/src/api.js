@@ -40,6 +40,8 @@ export const atlasService = {
   // Product API
   listProjects: () => request("/product/projects"),
   getProject: (projectId) => request(`/product/projects/${projectId}`),
+  deleteProject: (projectId) => request(`/product/projects/${encodeURIComponent(projectId)}`, { method: "DELETE" }),
+  updateProject: (projectId, body) => request(`/product/projects/${encodeURIComponent(projectId)}`, { method: "PATCH", body: JSON.stringify(body) }),
   createProject: async ({ file, name, goal, target }) => {
     const form = new FormData();
     form.append("file", file);
@@ -53,12 +55,21 @@ export const atlasService = {
   },
   projectAction: (projectId, action, body = {}) => request(`/product/projects/${projectId}/${action}`, { method: "POST", body: JSON.stringify(body) }),
 
-  // Delivery downloads
+  // Delivery & dataset downloads
   reportUrl: (projectId) => `${API_BASE}/product/projects/${encodeURIComponent(projectId)}/report`,
   deploymentFileUrl: (projectId, filename) => `${API_BASE}/product/projects/${encodeURIComponent(projectId)}/deployment/${encodeURIComponent(filename)}`,
+  exportDatasetUrl: (projectId, filename) => `${API_BASE}/product/projects/${encodeURIComponent(projectId)}/exports/${encodeURIComponent(filename)}`,
+  cleanedDatasetUrl: (projectId) => `${API_BASE}/product/projects/${encodeURIComponent(projectId)}/cleaned`,
   shapPlotUrl: (projectId, plotName) => `${API_BASE}/product/projects/${encodeURIComponent(projectId)}/shap/${encodeURIComponent(plotName)}`,
 
-  // Inference
+  // Project-specific Dynamic Inference
+  predictProject: (projectId, payload) =>
+    request(`/product/projects/${encodeURIComponent(projectId)}/predict`, {
+      method: "POST",
+      body: JSON.stringify(payload),
+    }),
+
+  // Global Inference
   predict: (record) => request("/predict", { method: "POST", body: JSON.stringify(record) }),
   predictBatch: (instances) =>
     request("/predict_batch", { method: "POST", body: JSON.stringify({ instances }) }),

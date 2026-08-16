@@ -156,8 +156,8 @@ def _infer_column_type(series: pd.Series, col_name: str) -> ColumnType:
 
         return "numeric"
 
-    # ── 4. Object / string columns ───────────────────────────────────────
-    if pd.api.types.is_object_dtype(dtype):
+    # ── 4. Object / string / categorical columns ──────────────────────────
+    if pd.api.types.is_object_dtype(dtype) or pd.api.types.is_string_dtype(dtype) or str(dtype) == "category":
         # 4a. Datetime — checked first if date-like name hint exists
         if _has_date_name_hint(col_name):
             try:
